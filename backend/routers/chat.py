@@ -39,6 +39,16 @@ def chat_stream(body: ChatRequest, db: Session = Depends(get_db)):
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    # Fetch the last 5 conversations for memory context
+    recent_history = (
+        db.query(Conversation)
+        .filter(Conversation.kb_id == body.kb_id)
+        .order_by(Conversation.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    history = list(reversed(recent_history))  # oldest first
+
     results = chroma_client.query_documents(body.kb_id, body.message, n_results=5)
     context_texts = [r["text"] for r in results]
     sources = [
@@ -56,7 +66,7 @@ def chat_stream(body: ChatRequest, db: Session = Depends(get_db)):
 
     def generate() -> Generator[str, None, None]:
         chunks: List[str] = []
-        for chunk in generate_answer_stream(body.message, context_texts):
+        for chunk in generate_answer_stream(body.message, context_texts, history):
             chunks.append(chunk)
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         full_answer = "".join(chunks)

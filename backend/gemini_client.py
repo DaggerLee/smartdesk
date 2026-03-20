@@ -36,21 +36,30 @@ def _find_model() -> str:
     raise RuntimeError(f"No model supporting generateContent found. Available: {names}")
 
 
-def _build_prompt(question: str, context: List[str]) -> str:
-    """Build the prompt string from question and retrieved context chunks."""
+def _build_prompt(question: str, context: List[str], history: list = None) -> str:
+    """Build the prompt string from question, retrieved context chunks, and conversation history."""
+    history_block = ""
+    if history:
+        lines = ["Previous conversation:"]
+        for turn in history:
+            lines.append(f"User: {turn.question}")
+            lines.append(f"Assistant: {turn.answer}")
+        history_block = "\n".join(lines) + "\n\n"
+
     if context:
         context_text = "\n\n---\n\n".join(context)
         return (
             "You are a professional enterprise customer service assistant. "
-            "Answer the user's question using the reference material below.\n"
+            "Answer the user's question using the reference material and conversation history below.\n"
             "If the reference material contains relevant information, use it to answer "
             "and append exactly [SOURCE_USED] at the very end of your response (no space before it).\n"
             "If the reference material does not contain relevant information, answer from general knowledge "
             "and do NOT append [SOURCE_USED].\n"
             "Do not make up content. Always respond in English.\n\n"
-            f"[Reference Material]\n{context_text}\n\n"
-            f"[User Question]\n{question}\n\n"
-            "Please provide an accurate, professional, and concise answer:"
+            f"{history_block}"
+            f"Current question: {question}\n\n"
+            f"Relevant context from documents:\n{context_text}\n\n"
+            "Please answer based on the context above and the conversation history:"
         )
     return (
         "You are a professional enterprise customer service assistant. "
@@ -58,15 +67,16 @@ def _build_prompt(question: str, context: List[str]) -> str:
         "Please inform the user that no relevant content was found, "
         "and suggest they upload related documents before asking again. "
         "Always respond in English.\n\n"
+        f"{history_block}"
         f"User question: {question}"
     )
 
 
-def generate_answer(question: str, context: List[str]) -> str:
+def generate_answer(question: str, context: List[str], history: list = None) -> str:
     """Generate a complete answer (non-streaming)."""
     model = _find_model()
     url = f"{_BASE}/{model}:generateContent?key={_API_KEY}"
-    prompt = _build_prompt(question, context)
+    prompt = _build_prompt(question, context, history)
 
     resp = requests.post(
         url,
@@ -77,11 +87,11 @@ def generate_answer(question: str, context: List[str]) -> str:
     return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def generate_answer_stream(question: str, context: List[str]) -> Generator[str, None, None]:
+def generate_answer_stream(question: str, context: List[str], history: list = None) -> Generator[str, None, None]:
     """Generate an answer as a stream, yielding text chunks one at a time."""
     model = _find_model()
     url = f"{_BASE}/{model}:streamGenerateContent?alt=sse&key={_API_KEY}"
-    prompt = _build_prompt(question, context)
+    prompt = _build_prompt(question, context, history)
 
     with requests.post(
         url,
