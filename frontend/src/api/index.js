@@ -16,6 +16,14 @@ export function deleteKnowledgeBase(id) {
   return api.delete(`/knowledge-base/${id}`).then((r) => r.data);
 }
 
+export function listFiles(kbId) {
+  return api.get(`/knowledge-base/${kbId}/files`).then((r) => r.data);
+}
+
+export function deleteFile(kbId, filename) {
+  return api.delete(`/knowledge-base/${kbId}/files/${encodeURIComponent(filename)}`).then((r) => r.data);
+}
+
 export function uploadFile(kbId, file, onProgress) {
   const form = new FormData();
   form.append("file", file);

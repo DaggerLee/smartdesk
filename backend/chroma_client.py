@@ -98,6 +98,18 @@ def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[dict]:
     ]
 
 
+def delete_documents_by_filename(kb_id: int, filename: str) -> None:
+    """Delete all chunks that belong to a specific file within a knowledge base."""
+    try:
+        collection = _get_or_create(kb_id)
+        results = collection.get(where={"filename": filename}, include=[])
+        ids = results.get("ids", [])
+        if ids:
+            collection.delete(ids=ids)
+    except Exception:
+        pass
+
+
 def delete_collection(kb_id: int) -> None:
     """Delete all vector data for a knowledge base."""
     try:

@@ -42,9 +42,11 @@ def _build_prompt(question: str, context: List[str]) -> str:
         context_text = "\n\n---\n\n".join(context)
         return (
             "You are a professional enterprise customer service assistant. "
-            "Answer the user's question strictly based on the reference material below.\n"
-            "If the reference material does not contain relevant information, honestly tell the user "
-            "that no relevant information was found in the knowledge base. "
+            "Answer the user's question using the reference material below.\n"
+            "If the reference material contains relevant information, use it to answer "
+            "and append exactly [SOURCE_USED] at the very end of your response (no space before it).\n"
+            "If the reference material does not contain relevant information, answer from general knowledge "
+            "and do NOT append [SOURCE_USED].\n"
             "Do not make up content. Always respond in English.\n\n"
             f"[Reference Material]\n{context_text}\n\n"
             f"[User Question]\n{question}\n\n"

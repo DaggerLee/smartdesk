@@ -3,7 +3,8 @@
     "allow": [
       "Bash(mkdir -p /c/Users/Dagger/smartdesk/backend/routers)",
       "Bash(mkdir -p /c/Users/Dagger/smartdesk/frontend/src/components)",
-      "Bash(mkdir -p /c/Users/Dagger/smartdesk/frontend/src/api)"
+      "Bash(mkdir -p /c/Users/Dagger/smartdesk/frontend/src/api)",
+      "Bash(git add:*)"
     ]
   }
 }

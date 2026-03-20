@@ -22,6 +22,23 @@
       </div>
     </div>
 
+    <!-- Uploaded files bar -->
+    <div v-if="uploadedFiles.length > 0" class="files-bar">
+      <span class="files-bar-label">Files:</span>
+      <div class="files-chips">
+        <div v-for="f in uploadedFiles" :key="f.id" class="file-chip">
+          <span class="file-chip-icon">📄</span>
+          <span class="file-chip-name" :title="f.filename">{{ f.filename }}</span>
+          <span class="file-chip-count">{{ f.chunk_count }} chunks</span>
+          <button
+            class="file-chip-delete"
+            title="Delete file"
+            @click="handleDeleteFile(f.filename)"
+          >×</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Message area -->
     <div ref="messageArea" class="message-area">
       <!-- Empty state -->
@@ -89,8 +106,8 @@
 
 <script setup>
 import { marked } from "marked";
-import { nextTick, onMounted, ref, watch } from "vue";
-import { clearChatHistory, getChatHistory, sendMessageStream } from "../api/index.js";
+import { nextTick, ref, watch } from "vue";
+import { clearChatHistory, deleteFile, getChatHistory, listFiles, sendMessageStream } from "../api/index.js";
 import FileUpload from "./FileUpload.vue";
 
 const props = defineProps({
@@ -98,16 +115,20 @@ const props = defineProps({
 });
 
 const messages = ref([]);
+const uploadedFiles = ref([]);
 const inputText = ref("");
 const sending = ref(false);
 const loading = ref(false);
 const messageArea = ref(null);
 const textareaRef = ref(null);
 
-// Reload history whenever the active knowledge base changes
+// Reload history and file list whenever the active knowledge base changes
 watch(
   () => props.kb.id,
-  () => loadHistory(),
+  () => {
+    loadHistory();
+    loadFiles();
+  },
   { immediate: true }
 );
 
@@ -156,7 +177,12 @@ async function handleSend() {
       },
       () => {
         const idx = messages.value.findIndex((m) => m.id === tempId);
-        if (idx !== -1) messages.value[idx].streaming = false;
+        if (idx !== -1) {
+          messages.value[idx].answer = messages.value[idx].answer
+            .replace("[SOURCE_USED]", "")
+            .trimEnd();
+          messages.value[idx].streaming = false;
+        }
       }
     );
   } catch (err) {
@@ -178,8 +204,26 @@ async function handleClear() {
   messages.value = [];
 }
 
-function onFileUploaded() {
-  // File upload feedback is handled inside the FileUpload component
+async function loadFiles() {
+  try {
+    uploadedFiles.value = await listFiles(props.kb.id);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function onFileUploaded() {
+  await loadFiles();
+}
+
+async function handleDeleteFile(filename) {
+  if (!confirm(`Delete "${filename}" and all its indexed content?`)) return;
+  try {
+    await deleteFile(props.kb.id, filename);
+    await loadFiles();
+  } catch (err) {
+    alert(`Delete failed: ${err.response?.data?.detail || err.message}`);
+  }
 }
 
 function renderMarkdown(text) {
@@ -202,12 +246,14 @@ function scrollToBottom() {
 function autoResize(e) {
   const el = e.target;
   el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, 140) + "px";
+  el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  el.style.overflowY = el.scrollHeight > 120 ? "auto" : "hidden";
 }
 
 function resetTextarea() {
   if (textareaRef.value) {
     textareaRef.value.style.height = "auto";
+    textareaRef.value.style.overflowY = "hidden";
   }
 }
 </script>
@@ -218,6 +264,7 @@ function resetTextarea() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--color-bg);
 }
 
@@ -278,6 +325,7 @@ function resetTextarea() {
 /* ── Messages ── */
 .message-area {
   flex: 1;
+  min-height: 0;      /* required: lets flex child shrink and become scrollable */
   overflow-y: auto;
   padding: 24px 32px;
   display: flex;
@@ -454,8 +502,10 @@ function resetTextarea() {
   color: var(--color-text);
   resize: none;
   line-height: 1.6;
-  max-height: 140px;
-  overflow-y: auto;
+  max-height: 120px;
+  overflow-y: hidden;
+  padding-top: 2px;
+  vertical-align: top;
 }
 
 .input-box textarea::placeholder {
@@ -481,6 +531,83 @@ function resetTextarea() {
 .btn-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ── Files bar ── */
+.files-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.files-bar-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.files-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.file-chip-icon {
+  font-size: 11px;
+}
+
+.file-chip-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.file-chip-count {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.file-chip-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin-left: 2px;
+  transition: background 0.1s, color 0.1s;
+}
+
+.file-chip-delete:hover {
+  background: #fee2e2;
+  color: #ef4444;
 }
 
 /* ── Sources ── */

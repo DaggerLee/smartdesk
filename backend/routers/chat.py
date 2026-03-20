@@ -59,12 +59,14 @@ def chat_stream(body: ChatRequest, db: Session = Depends(get_db)):
         for chunk in generate_answer_stream(body.message, context_texts):
             chunks.append(chunk)
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-        # Send sources before [DONE]
-        if unique_sources:
-            yield f"data: {json.dumps({'sources': unique_sources}, ensure_ascii=False)}\n\n"
-        # Save complete answer to DB after streaming finishes
         full_answer = "".join(chunks)
-        conv = Conversation(kb_id=body.kb_id, question=body.message, answer=full_answer)
+        use_sources = "[SOURCE_USED]" in full_answer
+        clean_answer = full_answer.replace("[SOURCE_USED]", "").rstrip()
+        # Send sources only when the model confirmed it used document content
+        if use_sources and unique_sources:
+            yield f"data: {json.dumps({'sources': unique_sources}, ensure_ascii=False)}\n\n"
+        # Save clean answer to DB
+        conv = Conversation(kb_id=body.kb_id, question=body.message, answer=clean_answer)
         db.add(conv)
         db.commit()
         yield "data: [DONE]\n\n"

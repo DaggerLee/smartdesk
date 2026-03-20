@@ -22,3 +22,13 @@ class Conversation(Base):
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UploadedFile(Base):
+    __tablename__ = "uploaded_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kb_id = Column(Integer, nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    chunk_count = Column(Integer, default=0)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)

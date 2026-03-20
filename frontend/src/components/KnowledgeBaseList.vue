@@ -80,10 +80,11 @@ async function handleCreate() {
   if (!form.value.name.trim()) return;
   creating.value = true;
   try {
-    await createKnowledgeBase(form.value.name.trim(), form.value.description.trim());
+    const newKb = await createKnowledgeBase(form.value.name.trim(), form.value.description.trim());
     form.value = { name: "", description: "" };
     showModal.value = false;
     emit("refresh");
+    emit("select", newKb);
   } finally {
     creating.value = false;
   }
