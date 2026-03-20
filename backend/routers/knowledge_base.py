@@ -32,7 +32,7 @@ class KBResponse(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _extract_text(filename: str, content: bytes) -> str:
-    """从 PDF 或纯文本文件中提取文字。"""
+    """Extract plain text from a PDF or text file."""
     if filename.lower().endswith(".pdf"):
         try:
             from pypdf import PdfReader
@@ -40,15 +40,15 @@ def _extract_text(filename: str, content: bytes) -> str:
             pages = [page.extract_text() or "" for page in reader.pages]
             return "\n\n".join(pages)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"PDF 解析失败: {e}")
+            raise HTTPException(status_code=400, detail=f"PDF parsing failed: {e}")
     else:
-        # 尝试 UTF-8，再尝试 GBK
+        # Try UTF-8 first, then GBK, then latin-1 as fallback
         for enc in ("utf-8", "gbk", "latin-1"):
             try:
                 return content.decode(enc)
             except UnicodeDecodeError:
                 continue
-        raise HTTPException(status_code=400, detail="文件编码无法识别，请使用 UTF-8 或 GBK 编码的文本文件。")
+        raise HTTPException(status_code=400, detail="Unrecognized file encoding. Please use UTF-8 or GBK.")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -72,11 +72,11 @@ def list_knowledge_bases(db: Session = Depends(get_db)):
 def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)):
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
     chroma_client.delete_collection(kb_id)
     db.delete(kb)
     db.commit()
-    return {"message": "删除成功"}
+    return {"message": "Deleted successfully"}
 
 
 @router.post("/{kb_id}/upload")
@@ -87,30 +87,30 @@ async def upload_file(
 ):
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
 
     filename = file.filename or "upload"
     if not (filename.lower().endswith(".pdf") or filename.lower().endswith(".txt")):
-        raise HTTPException(status_code=400, detail="仅支持 PDF 和 TXT 文件")
+        raise HTTPException(status_code=400, detail="Only PDF and TXT files are supported")
 
     content = await file.read()
     text = _extract_text(filename, content)
 
     if not text.strip():
-        raise HTTPException(status_code=400, detail="文件内容为空，无法解析")
+        raise HTTPException(status_code=400, detail="File is empty or could not be parsed")
 
     chunks = chroma_client.chunk_text(text)
     if not chunks:
-        raise HTTPException(status_code=400, detail="文本分块失败，请检查文件内容")
+        raise HTTPException(status_code=400, detail="Text chunking failed — please check the file content")
 
-    # 生成唯一 ID：文件名前缀 + UUID
+    # Generate unique IDs: filename prefix + UUID
     prefix = filename.replace(" ", "_")[:30]
     ids = [f"{prefix}_{uuid.uuid4().hex[:8]}_{i}" for i, _ in enumerate(chunks)]
 
     chroma_client.add_documents(kb_id, chunks, ids)
 
     return {
-        "message": "文件上传并解析成功",
+        "message": "File uploaded and parsed successfully",
         "filename": filename,
         "chunks": len(chunks),
     }

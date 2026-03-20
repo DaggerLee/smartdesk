@@ -9,12 +9,12 @@ load_dotenv()
 from database import Base, engine
 from routers import chat, knowledge_base
 
-# 自动建表
+# Auto-create database tables on startup
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="SmartDesk API", version="1.0.0")
 
-# 允许前端开发服务器跨域访问
+# Allow the Vite dev server to make cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

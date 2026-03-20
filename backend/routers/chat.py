@@ -1,12 +1,14 @@
-from typing import List
+import json
+from typing import Generator, List
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import chroma_client
 from database import get_db
-from gemini_client import generate_answer
+from gemini_client import generate_answer_stream
 from models import Conversation, KnowledgeBase
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -19,11 +21,6 @@ class ChatRequest(BaseModel):
     message: str
 
 
-class ChatResponse(BaseModel):
-    answer: str
-    sources: List[str]
-
-
 class HistoryItem(BaseModel):
     id: int
     question: str
@@ -33,34 +30,41 @@ class HistoryItem(BaseModel):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@router.post("", response_model=ChatResponse)
-def chat(body: ChatRequest, db: Session = Depends(get_db)):
+@router.post("/stream")
+def chat_stream(body: ChatRequest, db: Session = Depends(get_db)):
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == body.kb_id).first()
     if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
 
     if not body.message.strip():
-        raise HTTPException(status_code=400, detail="消息不能为空")
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # 1. 从 ChromaDB 检索相关文档块
     context = chroma_client.query_documents(body.kb_id, body.message, n_results=5)
 
-    # 2. 调用 Gemini 生成回答
-    answer = generate_answer(body.message, context)
+    def generate() -> Generator[str, None, None]:
+        chunks: List[str] = []
+        for chunk in generate_answer_stream(body.message, context):
+            chunks.append(chunk)
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        # Save complete answer to DB after streaming finishes
+        full_answer = "".join(chunks)
+        conv = Conversation(kb_id=body.kb_id, question=body.message, answer=full_answer)
+        db.add(conv)
+        db.commit()
+        yield "data: [DONE]\n\n"
 
-    # 3. 保存对话记录
-    conv = Conversation(kb_id=body.kb_id, question=body.message, answer=answer)
-    db.add(conv)
-    db.commit()
-
-    return ChatResponse(answer=answer, sources=context[:3])
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/history/{kb_id}", response_model=List[HistoryItem])
 def get_history(kb_id: int, db: Session = Depends(get_db)):
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
 
     convs = (
         db.query(Conversation)
@@ -84,4 +88,4 @@ def get_history(kb_id: int, db: Session = Depends(get_db)):
 def clear_history(kb_id: int, db: Session = Depends(get_db)):
     db.query(Conversation).filter(Conversation.kb_id == kb_id).delete()
     db.commit()
-    return {"message": "对话历史已清空"}
+    return {"message": "Chat history cleared"}

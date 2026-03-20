@@ -13,12 +13,12 @@
       {{ uploading ? `Uploading ${progress}%` : "Upload File" }}
     </button>
 
-    <!-- 上传进度条 -->
+    <!-- Upload progress bar -->
     <div v-if="uploading" class="progress-bar">
       <div class="progress-fill" :style="{ width: progress + '%' }"></div>
     </div>
 
-    <!-- 结果提示 -->
+    <!-- Result message -->
     <transition name="fade">
       <div v-if="resultMsg" class="result-msg" :class="resultType">
         {{ resultMsg }}
@@ -64,9 +64,9 @@ async function handleChange(e) {
   } finally {
     uploading.value = false;
     progress.value = 0;
-    // 重置 input，允许重复上传同名文件
+    // Reset input so the same file can be uploaded again
     if (inputRef.value) inputRef.value.value = "";
-    // 3 秒后清除提示
+    // Clear the result message after 4 seconds
     setTimeout(() => (resultMsg.value = ""), 4000);
   }
 }

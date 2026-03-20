@@ -5,10 +5,10 @@ import chromadb
 from chromadb.config import Settings
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-# ChromaDB 内置 ONNX 嵌入模型，无需 PyTorch
+# Uses ChromaDB's built-in ONNX embedding model — no PyTorch required
 _embedding_fn = DefaultEmbeddingFunction()
 
-# 本地持久化 ChromaDB，禁用遥测
+# Local persistent ChromaDB with telemetry disabled
 _client = chromadb.PersistentClient(
     path="./chroma_data",
     settings=Settings(anonymized_telemetry=False),
@@ -26,10 +26,10 @@ def _get_or_create(kb_id: int):
     )
 
 
-# ── 文本分块 ──────────────────────────────────────────────────────────────────
+# ── Text Chunking ─────────────────────────────────────────────────────────────
 
 def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
-    """将长文本切分为带重叠的小块，优先在段落/句子边界处截断。"""
+    """Split long text into overlapping chunks, preferring paragraph/sentence boundaries."""
     text = re.sub(r"\n{3,}", "\n\n", text.strip())
     chunks: List[str] = []
     start = 0
@@ -61,16 +61,16 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str
     return chunks
 
 
-# ── 核心操作 ──────────────────────────────────────────────────────────────────
+# ── Core Operations ───────────────────────────────────────────────────────────
 
 def add_documents(kb_id: int, texts: List[str], ids: List[str]) -> None:
-    """将文本块存入 ChromaDB（由本地模型自动向量化）。"""
+    """Store text chunks in ChromaDB (auto-embedded by the local model)."""
     collection = _get_or_create(kb_id)
     collection.add(documents=texts, ids=ids)
 
 
 def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[str]:
-    """检索与问题最相关的文档块。"""
+    """Retrieve the most relevant document chunks for a query."""
     collection = _get_or_create(kb_id)
     count = collection.count()
     if count == 0:
@@ -86,7 +86,7 @@ def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[str]:
 
 
 def delete_collection(kb_id: int) -> None:
-    """删除整个知识库的向量数据。"""
+    """Delete all vector data for a knowledge base."""
     try:
         _client.delete_collection(_collection_name(kb_id))
     except Exception:

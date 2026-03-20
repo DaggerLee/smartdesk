@@ -1,6 +1,6 @@
 <template>
   <div class="layout">
-    <!-- 左侧：知识库列表 -->
+    <!-- Left panel: knowledge base list -->
     <KnowledgeBaseList
       :knowledge-bases="knowledgeBases"
       :selected-id="selectedKB?.id ?? null"
@@ -9,11 +9,11 @@
       @refresh="loadKnowledgeBases"
     />
 
-    <!-- 右侧：对话窗口 -->
+    <!-- Right panel: chat window -->
     <main class="main">
       <ChatWindow v-if="selectedKB" :kb="selectedKB" />
 
-      <!-- 未选择知识库时的欢迎页 -->
+      <!-- Welcome screen shown when no knowledge base is selected -->
       <div v-else class="welcome">
         <div class="welcome-card">
           <div class="welcome-icon">🤖</div>
@@ -49,13 +49,13 @@ async function loadKnowledgeBases() {
   loadingKBs.value = true;
   try {
     knowledgeBases.value = await listKnowledgeBases();
-    // 若之前选择的知识库仍存在，保持选中
+    // Keep the previously selected KB if it still exists
     if (selectedKB.value) {
       const found = knowledgeBases.value.find((kb) => kb.id === selectedKB.value.id);
       selectedKB.value = found ?? null;
     }
   } catch (e) {
-    console.error("加载知识库失败", e);
+    console.error("Failed to load knowledge bases", e);
   } finally {
     loadingKBs.value = false;
   }

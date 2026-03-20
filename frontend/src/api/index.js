@@ -2,7 +2,7 @@ import axios from "axios";
 
 const api = axios.create({ baseURL: "/api" });
 
-// ── 知识库 ────────────────────────────────────────────────────────────────────
+// ── Knowledge Base ────────────────────────────────────────────────────────────
 
 export function listKnowledgeBases() {
   return api.get("/knowledge-base").then((r) => r.data);
@@ -29,10 +29,47 @@ export function uploadFile(kbId, file, onProgress) {
     .then((r) => r.data);
 }
 
-// ── 对话 ──────────────────────────────────────────────────────────────────────
+// ── Chat ──────────────────────────────────────────────────────────────────────
 
-export function sendMessage(kbId, message) {
-  return api.post("/chat", { kb_id: kbId, message }).then((r) => r.data);
+export async function sendMessageStream(kbId, message, onChunk, onDone) {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kb_id: kbId, message }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: "Unknown error" }));
+    throw new Error(err.detail || "Request failed");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // keep any incomplete trailing line
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") {
+        onDone?.();
+        return;
+      }
+      try {
+        onChunk?.(JSON.parse(data));
+      } catch {
+        // skip malformed lines
+      }
+    }
+  }
+  onDone?.();
 }
 
 export function getChatHistory(kbId) {

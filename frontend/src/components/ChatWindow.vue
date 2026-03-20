@@ -1,6 +1,6 @@
 <template>
   <div class="chat-window">
-    <!-- 顶部工具栏 -->
+    <!-- Header toolbar -->
     <div class="chat-header">
       <div class="header-left">
         <span class="kb-icon">📚</span>
@@ -22,9 +22,9 @@
       </div>
     </div>
 
-    <!-- 消息区 -->
+    <!-- Message area -->
     <div ref="messageArea" class="message-area">
-      <!-- 空状态 -->
+      <!-- Empty state -->
       <div v-if="messages.length === 0 && !loading" class="empty-state">
         <div class="empty-icon">💬</div>
         <div class="empty-title">Start Chatting</div>
@@ -34,30 +34,22 @@
         </div>
       </div>
 
-      <!-- 消息列表 -->
+      <!-- Message list -->
       <template v-for="msg in messages" :key="msg.id">
-        <!-- 用户消息 -->
+        <!-- User message -->
         <div class="message user">
           <div class="bubble user-bubble">{{ msg.question }}</div>
           <div class="avatar user-avatar">Me</div>
         </div>
-        <!-- AI 回答 -->
+        <!-- AI response -->
         <div class="message ai">
           <div class="avatar ai-avatar">🤖</div>
-          <div class="bubble ai-bubble" v-html="renderMarkdown(msg.answer)"></div>
+          <div class="bubble ai-bubble" v-html="renderMessageContent(msg)"></div>
         </div>
       </template>
-
-      <!-- 加载中占位 -->
-      <div v-if="sending" class="message ai">
-        <div class="avatar ai-avatar">🤖</div>
-        <div class="bubble ai-bubble typing">
-          <span></span><span></span><span></span>
-        </div>
-      </div>
     </div>
 
-    <!-- 输入区 -->
+    <!-- Input area -->
     <div class="input-area">
       <div class="input-box">
         <textarea
@@ -69,7 +61,7 @@
           ref="textareaRef"
         ></textarea>
         <button class="btn-send" :disabled="sending || !inputText.trim()" @click="handleSend">
-          {{ sending ? "…" : "Send" }}
+          {{ sending ? "Generating..." : "Send" }}
         </button>
       </div>
     </div>
@@ -79,7 +71,7 @@
 <script setup>
 import { marked } from "marked";
 import { nextTick, onMounted, ref, watch } from "vue";
-import { clearChatHistory, getChatHistory, sendMessage } from "../api/index.js";
+import { clearChatHistory, getChatHistory, sendMessageStream } from "../api/index.js";
 import FileUpload from "./FileUpload.vue";
 
 const props = defineProps({
@@ -93,7 +85,7 @@ const loading = ref(false);
 const messageArea = ref(null);
 const textareaRef = ref(null);
 
-// 切换知识库时加载历史
+// Reload history whenever the active knowledge base changes
 watch(
   () => props.kb.id,
   () => loadHistory(),
@@ -122,22 +114,34 @@ async function handleSend() {
   resetTextarea();
   sending.value = true;
 
-  // 乐观更新：先追加用户消息（临时）
+  // Optimistically add the user message with an empty streaming answer
   const tempId = Date.now();
-  messages.value.push({ id: tempId, question: text, answer: "" });
+  messages.value.push({ id: tempId, question: text, answer: "", streaming: true });
   await nextTick();
   scrollToBottom();
 
   try {
-    const res = await sendMessage(props.kb.id, text);
-    // 替换临时消息为真实数据
-    const idx = messages.value.findIndex((m) => m.id === tempId);
-    if (idx !== -1) messages.value[idx].answer = res.answer;
+    await sendMessageStream(
+      props.kb.id,
+      text,
+      (chunk) => {
+        const idx = messages.value.findIndex((m) => m.id === tempId);
+        if (idx !== -1) {
+          messages.value[idx].answer += chunk;
+          scrollToBottom();
+        }
+      },
+      () => {
+        const idx = messages.value.findIndex((m) => m.id === tempId);
+        if (idx !== -1) messages.value[idx].streaming = false;
+      }
+    );
   } catch (err) {
     const idx = messages.value.findIndex((m) => m.id === tempId);
-    if (idx !== -1)
-      messages.value[idx].answer =
-        `❌ Request failed: ${err.response?.data?.detail || err.message}`;
+    if (idx !== -1) {
+      messages.value[idx].answer = `Request failed: ${err.message}`;
+      messages.value[idx].streaming = false;
+    }
   } finally {
     sending.value = false;
     await nextTick();
@@ -152,12 +156,18 @@ async function handleClear() {
 }
 
 function onFileUploaded() {
-  // 文件上传成功后无需额外操作，提示已在 FileUpload 组件显示
+  // File upload feedback is handled inside the FileUpload component
 }
 
 function renderMarkdown(text) {
   if (!text) return "";
   return marked.parse(text, { breaks: true });
+}
+
+function renderMessageContent(msg) {
+  const html = renderMarkdown(msg.answer);
+  if (msg.streaming) return html + '<span class="streaming-cursor">▋</span>';
+  return html;
 }
 
 function scrollToBottom() {
@@ -370,28 +380,18 @@ function resetTextarea() {
   margin: 6px 0;
 }
 
-/* 打字动画 */
-.typing {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  padding: 14px 18px;
+/* Streaming cursor */
+.ai-bubble :deep(.streaming-cursor) {
+  display: inline-block;
+  color: var(--color-primary);
+  animation: blink 1s step-end infinite;
+  font-weight: 400;
+  line-height: 1;
 }
 
-.typing span {
-  width: 7px;
-  height: 7px;
-  background: #94a3b8;
-  border-radius: 50%;
-  animation: bounce 1.2s infinite;
-}
-
-.typing span:nth-child(2) { animation-delay: 0.2s; }
-.typing span:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes bounce {
-  0%, 80%, 100% { transform: translateY(0); }
-  40% { transform: translateY(-6px); }
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 /* ── Input ── */
