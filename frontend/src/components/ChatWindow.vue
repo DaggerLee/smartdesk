@@ -44,7 +44,26 @@
         <!-- AI response -->
         <div class="message ai">
           <div class="avatar ai-avatar">🤖</div>
-          <div class="bubble ai-bubble" v-html="renderMessageContent(msg)"></div>
+          <div class="ai-content">
+            <div class="bubble ai-bubble" v-html="renderMessageContent(msg)"></div>
+            <!-- Sources -->
+            <div v-if="msg.sources && msg.sources.length > 0" class="sources">
+              <div class="sources-label">Sources</div>
+              <div class="sources-list">
+                <div
+                  v-for="(src, i) in msg.sources"
+                  :key="i"
+                  class="source-item"
+                >
+                  <span class="source-icon">📄</span>
+                  <div class="source-body">
+                    <div class="source-filename">{{ src.filename }}</div>
+                    <div class="source-preview">{{ src.preview }}…</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </template>
     </div>
@@ -116,7 +135,7 @@ async function handleSend() {
 
   // Optimistically add the user message with an empty streaming answer
   const tempId = Date.now();
-  messages.value.push({ id: tempId, question: text, answer: "", streaming: true });
+  messages.value.push({ id: tempId, question: text, answer: "", sources: [], streaming: true });
   await nextTick();
   scrollToBottom();
 
@@ -130,6 +149,10 @@ async function handleSend() {
           messages.value[idx].answer += chunk;
           scrollToBottom();
         }
+      },
+      (sources) => {
+        const idx = messages.value.findIndex((m) => m.id === tempId);
+        if (idx !== -1) messages.value[idx].sources = sources;
       },
       () => {
         const idx = messages.value.findIndex((m) => m.id === tempId);
@@ -300,6 +323,14 @@ function resetTextarea() {
 
 .message.ai {
   align-self: flex-start;
+  align-items: flex-start;
+}
+
+.ai-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 680px;
 }
 
 .avatar {
@@ -330,7 +361,6 @@ function resetTextarea() {
   border-radius: 14px;
   font-size: 14px;
   line-height: 1.7;
-  max-width: 680px;
   word-break: break-word;
 }
 
@@ -451,5 +481,70 @@ function resetTextarea() {
 .btn-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ── Sources ── */
+.sources {
+  padding: 0 2px;
+}
+
+.sources-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.source-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px 10px;
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  transition: background 0.1s;
+}
+
+.source-item:hover {
+  background: #f1f5f9;
+}
+
+.source-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.source-body {
+  min-width: 0;
+}
+
+.source-filename {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-preview {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin-top: 2px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 </style>

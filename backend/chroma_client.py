@@ -63,14 +63,17 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str
 
 # ── Core Operations ───────────────────────────────────────────────────────────
 
-def add_documents(kb_id: int, texts: List[str], ids: List[str]) -> None:
-    """Store text chunks in ChromaDB (auto-embedded by the local model)."""
+def add_documents(kb_id: int, texts: List[str], ids: List[str], metadatas: List[dict]) -> None:
+    """Store text chunks in ChromaDB with metadata (auto-embedded by the local model)."""
     collection = _get_or_create(kb_id)
-    collection.add(documents=texts, ids=ids)
+    collection.add(documents=texts, ids=ids, metadatas=metadatas)
 
 
-def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[str]:
-    """Retrieve the most relevant document chunks for a query."""
+def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[dict]:
+    """Retrieve the most relevant document chunks for a query.
+
+    Returns a list of dicts with keys: text, filename, chunk_index.
+    """
     collection = _get_or_create(kb_id)
     count = collection.count()
     if count == 0:
@@ -79,10 +82,20 @@ def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[str]:
     results = collection.query(
         query_texts=[query],
         n_results=min(n_results, count),
+        include=["documents", "metadatas"],
     )
 
-    docs = results.get("documents", [[]])[0]
-    return docs if docs else []
+    docs = results.get("documents", [[]])[0] or []
+    metas = results.get("metadatas", [[]])[0] or []
+
+    return [
+        {
+            "text": doc,
+            "filename": (metas[i] or {}).get("filename", "Unknown"),
+            "chunk_index": (metas[i] or {}).get("chunk_index", i),
+        }
+        for i, doc in enumerate(docs)
+    ]
 
 
 def delete_collection(kb_id: int) -> None:

@@ -106,8 +106,9 @@ async def upload_file(
     # Generate unique IDs: filename prefix + UUID
     prefix = filename.replace(" ", "_")[:30]
     ids = [f"{prefix}_{uuid.uuid4().hex[:8]}_{i}" for i, _ in enumerate(chunks)]
+    metadatas = [{"filename": filename, "chunk_index": i} for i, _ in enumerate(chunks)]
 
-    chroma_client.add_documents(kb_id, chunks, ids)
+    chroma_client.add_documents(kb_id, chunks, ids, metadatas)
 
     return {
         "message": "File uploaded and parsed successfully",

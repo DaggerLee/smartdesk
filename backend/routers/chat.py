@@ -39,13 +39,29 @@ def chat_stream(body: ChatRequest, db: Session = Depends(get_db)):
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    context = chroma_client.query_documents(body.kb_id, body.message, n_results=5)
+    results = chroma_client.query_documents(body.kb_id, body.message, n_results=5)
+    context_texts = [r["text"] for r in results]
+    sources = [
+        {"filename": r["filename"], "preview": r["text"][:80].replace("\n", " ")}
+        for r in results
+        if r["filename"] != "Unknown"
+    ]
+    # Deduplicate sources by filename while preserving order
+    seen: set = set()
+    unique_sources = []
+    for s in sources:
+        if s["filename"] not in seen:
+            seen.add(s["filename"])
+            unique_sources.append(s)
 
     def generate() -> Generator[str, None, None]:
         chunks: List[str] = []
-        for chunk in generate_answer_stream(body.message, context):
+        for chunk in generate_answer_stream(body.message, context_texts):
             chunks.append(chunk)
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        # Send sources before [DONE]
+        if unique_sources:
+            yield f"data: {json.dumps({'sources': unique_sources}, ensure_ascii=False)}\n\n"
         # Save complete answer to DB after streaming finishes
         full_answer = "".join(chunks)
         conv = Conversation(kb_id=body.kb_id, question=body.message, answer=full_answer)
