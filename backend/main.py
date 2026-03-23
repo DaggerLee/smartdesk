@@ -1,16 +1,34 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 load_dotenv()
 
-from database import Base, engine
-from routers import chat, knowledge_base
+# Ensure the data directory exists (used by SQLite and ChromaDB)
+Path("data").mkdir(exist_ok=True)
 
-# Auto-create database tables on startup
+from database import Base, engine
+from routers import auth, chat, knowledge_base
+
+# Auto-create all tables (new installs)
 Base.metadata.create_all(bind=engine)
+
+# Safe migrations for existing databases — each ALTER is a no-op if the column already exists
+_MIGRATIONS = [
+    "ALTER TABLE uploaded_files ADD COLUMN summary TEXT",
+    "ALTER TABLE knowledge_bases ADD COLUMN user_id INTEGER",
+]
+with engine.connect() as conn:
+    for sql in _MIGRATIONS:
+        try:
+            conn.execute(text(sql))
+            conn.commit()
+        except Exception:
+            pass  # Column already exists
 
 app = FastAPI(title="SmartDesk API", version="1.0.0")
 
@@ -23,6 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(knowledge_base.router)
 app.include_router(chat.router)
 

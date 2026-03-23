@@ -1,6 +1,61 @@
 import axios from "axios";
 
+// ── Token helpers ─────────────────────────────────────────────────────────────
+
+export function getToken() {
+  return localStorage.getItem("smartdesk_token") || "";
+}
+
+export function getStoredUsername() {
+  return localStorage.getItem("smartdesk_username") || "";
+}
+
+export function saveAuth(token, username) {
+  localStorage.setItem("smartdesk_token", token);
+  localStorage.setItem("smartdesk_username", username);
+}
+
+export function clearAuth() {
+  localStorage.removeItem("smartdesk_token");
+  localStorage.removeItem("smartdesk_username");
+}
+
+// ── Axios instance ────────────────────────────────────────────────────────────
+
 const api = axios.create({ baseURL: "/api" });
+
+// Attach the Bearer token to every request
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+// On 401, clear stored credentials and reload so the app shows the login page
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      clearAuth();
+      window.location.reload();
+    }
+    return Promise.reject(err);
+  }
+);
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export async function login(username, password) {
+  const { data } = await api.post("/auth/login", { username, password });
+  saveAuth(data.access_token, data.username);
+  return data;
+}
+
+export async function register(username, password) {
+  const { data } = await api.post("/auth/register", { username, password });
+  saveAuth(data.access_token, data.username);
+  return data;
+}
 
 // ── Knowledge Base ────────────────────────────────────────────────────────────
 
@@ -42,11 +97,19 @@ export function uploadFile(kbId, file, onProgress) {
 export async function sendMessageStream(kbId, message, onChunk, onSources, onDone) {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getToken()}`,
+    },
     body: JSON.stringify({ kb_id: kbId, message }),
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      clearAuth();
+      window.location.reload();
+      return;
+    }
     const err = await response.json().catch(() => ({ detail: "Unknown error" }));
     throw new Error(err.detail || "Request failed");
   }
@@ -61,7 +124,7 @@ export async function sendMessageStream(kbId, message, onChunk, onSources, onDon
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
-    buffer = lines.pop(); // keep any incomplete trailing line
+    buffer = lines.pop();
 
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;

@@ -1,12 +1,18 @@
 <template>
-  <div class="layout">
+  <!-- Auth screen — shown when no valid token is present -->
+  <AuthPage v-if="!isAuthenticated" @authenticated="onAuthenticated" />
+
+  <!-- Main app -->
+  <div v-else class="layout">
     <!-- Left panel: knowledge base list -->
     <KnowledgeBaseList
       :knowledge-bases="knowledgeBases"
       :selected-id="selectedKB?.id ?? null"
       :loading="loadingKBs"
+      :username="username"
       @select="selectKB"
       @refresh="loadKnowledgeBases"
+      @logout="handleLogout"
     />
 
     <!-- Right panel: chat window -->
@@ -35,15 +41,39 @@
 
 <script setup>
 import { onMounted, ref } from "vue";
-import { listKnowledgeBases } from "./api/index.js";
+import { clearAuth, getStoredUsername, getToken, listKnowledgeBases } from "./api/index.js";
+import AuthPage from "./components/AuthPage.vue";
 import ChatWindow from "./components/ChatWindow.vue";
 import KnowledgeBaseList from "./components/KnowledgeBaseList.vue";
 
+const isAuthenticated = ref(false);
+const username = ref("");
 const knowledgeBases = ref([]);
 const selectedKB = ref(null);
 const loadingKBs = ref(false);
 
-onMounted(() => loadKnowledgeBases());
+onMounted(() => {
+  // Restore session from localStorage if a token exists
+  if (getToken()) {
+    isAuthenticated.value = true;
+    username.value = getStoredUsername();
+    loadKnowledgeBases();
+  }
+});
+
+function onAuthenticated(name) {
+  isAuthenticated.value = true;
+  username.value = name;
+  loadKnowledgeBases();
+}
+
+function handleLogout() {
+  clearAuth();
+  isAuthenticated.value = false;
+  username.value = "";
+  knowledgeBases.value = [];
+  selectedKB.value = null;
+}
 
 async function loadKnowledgeBases() {
   loadingKBs.value = true;

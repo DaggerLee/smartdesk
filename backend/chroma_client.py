@@ -10,7 +10,7 @@ _embedding_fn = DefaultEmbeddingFunction()
 
 # Local persistent ChromaDB with telemetry disabled
 _client = chromadb.PersistentClient(
-    path="./chroma_data",
+    path="./data/chroma_data",
     settings=Settings(anonymized_telemetry=False),
 )
 
@@ -72,7 +72,8 @@ def add_documents(kb_id: int, texts: List[str], ids: List[str], metadatas: List[
 def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[dict]:
     """Retrieve the most relevant document chunks for a query.
 
-    Returns a list of dicts with keys: text, filename, chunk_index.
+    Returns a list of dicts with keys: text, filename, chunk_index, distance.
+    distance is a cosine distance in [0, 2]; lower means more relevant.
     """
     collection = _get_or_create(kb_id)
     count = collection.count()
@@ -82,17 +83,19 @@ def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[dict]:
     results = collection.query(
         query_texts=[query],
         n_results=min(n_results, count),
-        include=["documents", "metadatas"],
+        include=["documents", "metadatas", "distances"],
     )
 
     docs = results.get("documents", [[]])[0] or []
     metas = results.get("metadatas", [[]])[0] or []
+    dists = results.get("distances", [[]])[0] or []
 
     return [
         {
             "text": doc,
             "filename": (metas[i] or {}).get("filename", "Unknown"),
             "chunk_index": (metas[i] or {}).get("chunk_index", i),
+            "distance": dists[i] if i < len(dists) else 2.0,
         }
         for i, doc in enumerate(docs)
     ]

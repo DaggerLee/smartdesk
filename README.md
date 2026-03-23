@@ -1,47 +1,62 @@
 # 🤖 SmartDesk — Enterprise Knowledge Assistant
 
-An AI-powered knowledge base and customer support assistant built with RAG (Retrieval-Augmented Generation).
-Upload your documents and get instant, accurate answers powered by Google Gemini.
+An AI-powered enterprise knowledge base and customer support assistant built with RAG (Retrieval-Augmented Generation). Upload your documents and get instant, accurate answers powered by Google Gemini — with full user authentication and one-command Docker deployment.
+
+## Screenshots
+
+### Main Interface
+![Main](screenshot-main.png)
+
+### AI-Powered Q&A with Source Citation
+![Chat](screenshot-chat.png)
 
 ## Features
 
-- 📚 **Knowledge Base Management** — Create, switch, and delete multiple knowledge bases; auto-selects a newly created KB
-- 📄 **Document Ingestion** — Upload PDF and TXT files, automatically parsed, chunked, and indexed
-- 🗑️ **File Management** — Delete individual files from a knowledge base; removes both SQLite records and ChromaDB vectors
-- 🔍 **RAG Pipeline** — Semantic search with ChromaDB vector storage + Gemini streaming generation
-- ⚡ **Streaming Responses** — Answers stream word-by-word in real time via Server-Sent Events
-- 🎯 **Smart Source Citations** — Sources are shown only when the AI's answer is grounded in uploaded documents (detected via `[SOURCE_USED]` marker); general-knowledge replies show no sources
-- 💬 **Conversation History** — All chats saved to SQLite; history restored when switching knowledge bases
-- 🖊️ **Auto-Resizing Input** — Textarea grows up to 5 lines as you type, then scrolls; Enter to send, Shift+Enter for new line
+- 📚 **Knowledge Base Management** — Create multiple knowledge bases, each isolated per user
+- 📄 **Document Ingestion** — Upload PDF and TXT files; automatically parsed, chunked, and indexed
+- 🔍 **RAG Pipeline** — Semantic search with ChromaDB vector storage + Gemini generation
+- 🌐 **Tool Use / Web Search** — When documents lack sufficient context, automatically searches the web to supplement answers
+- 📝 **Document Auto-Summary** — Generates a 3-5 sentence summary for each uploaded file
+- ⚡ **Streaming Responses** — SSE-based token-by-token streaming, like ChatGPT
+- 🔗 **Source Citation** — Answers show exactly which document or web source they came from
+- 🧠 **Multi-Turn Memory** — AI remembers the last 5 messages for context-aware follow-up questions
+- 🔐 **JWT Authentication** — User registration/login with bcrypt password hashing; each user's data is fully isolated
+- 🐳 **Docker Deployment** — One-command startup with docker-compose
 
 ## Tech Stack
 
-- **Frontend**: Vue 3, Vite, Axios, Marked
-- **Backend**: Python, FastAPI
-- **AI**: Google Gemini API (auto-selects best available model)
-- **Vector DB**: ChromaDB (local persistent storage, ONNX embeddings)
-- **Database**: SQLite via SQLAlchemy
+| Layer | Technologies |
+|-------|-------------|
+| Frontend | Vue 3, Vite, Nginx |
+| Backend | Python, FastAPI |
+| AI | Google Gemini API (gemini-1.5-flash) |
+| Vector DB | ChromaDB (local persistent storage) |
+| Database | SQLite |
+| Auth | JWT (HS256) + bcrypt |
+| Deployment | Docker, docker-compose |
 
-## Getting Started
+## Quick Start (Docker)
 
-### Prerequisites
+```bash
+git clone https://github.com/DaggerLee/smartdesk.git
+cd smartdesk
+cp .env.example .env        # Add your GEMINI_API_KEY
+docker-compose up --build
+```
 
-- Python 3.9+
-- Node.js 18+
-- Google Gemini API Key (free at [aistudio.google.com](https://aistudio.google.com))
+Open http://localhost — register an account and start uploading documents.
+
+## Local Development
 
 ### Backend
-
 ```bash
 cd backend
 pip install -r requirements.txt
-# Create a .env file with your key:
-echo "GEMINI_API_KEY=your_api_key_here" > .env
+export GEMINI_API_KEY=your_key_here
 uvicorn main:app --reload --port 8000
 ```
 
 ### Frontend
-
 ```bash
 cd frontend
 npm install
@@ -55,44 +70,29 @@ Open http://localhost:5173
 ```
 User Query
     ↓
-Frontend (Vue 3 + SSE streaming)
+Vue 3 Frontend (Nginx)
     ↓
-FastAPI Backend
+FastAPI Backend (JWT Auth)
     ↓
-ChromaDB (semantic search) → Top-5 relevant chunks
+RAG Quality Check
+    ├── Sufficient → ChromaDB retrieval → Gemini (stream)
+    └── Insufficient → Web Search (googlesearch) → Gemini (stream)
     ↓
-Gemini API (streaming answer with context)
-    ↓
-[SOURCE_USED] detection → conditional source citations
-    ↓
-Real-time streamed response to user
+Streaming SSE Response + Source Citation
 ```
 
-## Project Structure
+## API Endpoints
 
-```
-smartdesk/
-├── backend/
-│   ├── main.py                  # FastAPI app entry point
-│   ├── database.py              # SQLAlchemy setup
-│   ├── models.py                # KnowledgeBase, Conversation, UploadedFile
-│   ├── chroma_client.py         # ChromaDB operations (add, query, delete)
-│   ├── gemini_client.py         # Gemini streaming client + prompt builder
-│   └── routers/
-│       ├── chat.py              # /api/chat/stream, history endpoints
-│       └── knowledge_base.py   # KB CRUD + file upload/delete endpoints
-└── frontend/
-    └── src/
-        ├── App.vue              # Root layout, KB selection state
-        ├── api/index.js         # Axios + fetch API client
-        └── components/
-            ├── ChatWindow.vue       # Chat UI, streaming, file bar
-            ├── KnowledgeBaseList.vue # Sidebar, KB create/delete
-            └── FileUpload.vue       # File upload button
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/auth/register | Register new user |
+| POST | /api/auth/login | Login, returns JWT |
+| GET | /api/knowledge-base | List user's knowledge bases |
+| POST | /api/knowledge-base | Create knowledge base |
+| POST | /api/knowledge-base/{id}/upload | Upload document |
+| DELETE | /api/knowledge-base/{id}/files/{filename} | Delete document |
+| POST | /api/chat/stream | RAG chat (streaming SSE) |
+| GET | /api/chat/history/{kb_id} | Get conversation history |
 
 ## Background
-
-Built to demonstrate production-grade RAG architecture for enterprise knowledge management.
-Inspired by real-world AI assistant integration work done during internships at
-Shanghai Intelligent Transportation and Google Maps.
+Built to demonstrate production-grade RAG architecture for enterprise knowledge management, inspired by real-world AI assistant integration work during internships at Google Maps and Shanghai Intelligent Transportation.

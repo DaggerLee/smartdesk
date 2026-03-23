@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+    volumes:
+      # Persist SQLite database and ChromaDB vector store across container restarts
+      - smartdesk_data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  smartdesk_data:

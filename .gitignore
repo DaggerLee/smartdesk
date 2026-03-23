@@ -17,6 +17,5 @@ __pycache__/
 venv/
 .venv/
 
-# Database & vector store (runtime data)
-*.db
-backend/chroma_data/
+# Database & vector store (runtime data — now lives in backend/data/)
+backend/data/

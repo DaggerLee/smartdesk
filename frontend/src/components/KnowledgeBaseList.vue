@@ -38,6 +38,15 @@
       </div>
     </div>
 
+    <!-- User info at the bottom of the sidebar -->
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar">{{ username.charAt(0).toUpperCase() }}</div>
+        <span class="user-name" :title="username">{{ username }}</span>
+      </div>
+      <button class="btn-logout" title="Sign out" @click="$emit('logout')">Sign out</button>
+    </div>
+
     <div v-if="showModal" class="modal-mask" @click.self="showModal = false">
       <div class="modal">
         <h3>New Knowledge Base</h3>
@@ -68,9 +77,10 @@ const props = defineProps({
   knowledgeBases: { type: Array, default: () => [] },
   selectedId: { type: Number, default: null },
   loading: { type: Boolean, default: false },
+  username: { type: String, default: "" },
 });
 
-const emit = defineEmits(["select", "refresh"]);
+const emit = defineEmits(["select", "refresh", "logout"]);
 
 const showModal = ref(false);
 const creating = ref(false);
@@ -229,6 +239,63 @@ async function handleDelete(kb) {
 
 .btn-delete:hover {
   color: #f87171;
+}
+
+/* Sidebar footer — user info + logout */
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-top: 1px solid #2d3f55;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.user-name {
+  font-size: 13px;
+  color: #cbd5e1;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-logout {
+  font-size: 12px;
+  color: #64748b;
+  background: transparent;
+  padding: 4px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.btn-logout:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
 }
 
 /* Modal */

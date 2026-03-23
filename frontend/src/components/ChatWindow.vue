@@ -28,7 +28,12 @@
       <div class="files-chips">
         <div v-for="f in uploadedFiles" :key="f.id" class="file-chip">
           <span class="file-chip-icon">📄</span>
-          <span class="file-chip-name" :title="f.filename">{{ f.filename }}</span>
+          <span
+            class="file-chip-name"
+            :title="f.summary ? 'Click to view summary' : f.filename"
+            :class="{ 'has-summary': f.summary }"
+            @click="toggleSummary(f)"
+          >{{ f.filename }}</span>
           <span class="file-chip-count">{{ f.chunk_count }} chunks</span>
           <button
             class="file-chip-delete"
@@ -36,6 +41,18 @@
             @click="handleDeleteFile(f.filename)"
           >×</button>
         </div>
+      </div>
+    </div>
+
+    <!-- File summary panel (shown when a file chip is clicked) -->
+    <div v-if="activeSummaryFile" class="summary-panel">
+      <div class="summary-panel-header">
+        <span class="summary-panel-title">📄 {{ activeSummaryFile.filename }}</span>
+        <button class="summary-panel-close" @click="activeSummaryFile = null">×</button>
+      </div>
+      <div class="summary-panel-body">
+        <span v-if="activeSummaryFile.summary">{{ activeSummaryFile.summary }}</span>
+        <span v-else class="summary-pending">Summary is being generated, please check back shortly…</span>
       </div>
     </div>
 
@@ -67,15 +84,31 @@
             <div v-if="msg.sources && msg.sources.length > 0" class="sources">
               <div class="sources-label">Sources</div>
               <div class="sources-list">
+                <!-- Document source -->
                 <div
                   v-for="(src, i) in msg.sources"
                   :key="i"
                   class="source-item"
+                  :class="src.type === 'web' ? 'source-web' : 'source-doc'"
                 >
-                  <span class="source-icon">📄</span>
+                  <span class="source-icon">{{ src.type === 'web' ? '🌐' : '📄' }}</span>
                   <div class="source-body">
-                    <div class="source-filename">{{ src.filename }}</div>
-                    <div class="source-preview">{{ src.preview }}…</div>
+                    <!-- Document source layout -->
+                    <template v-if="src.type !== 'web'">
+                      <div class="source-filename">{{ src.filename }}</div>
+                      <div class="source-preview">{{ src.preview }}…</div>
+                    </template>
+                    <!-- Web source layout -->
+                    <template v-else>
+                      <a
+                        class="source-title"
+                        :href="src.url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >{{ src.title }}</a>
+                      <div class="source-url">{{ src.url }}</div>
+                      <div v-if="src.snippet" class="source-preview">{{ src.snippet }}</div>
+                    </template>
                   </div>
                 </div>
               </div>
@@ -121,6 +154,7 @@ const sending = ref(false);
 const loading = ref(false);
 const messageArea = ref(null);
 const textareaRef = ref(null);
+const activeSummaryFile = ref(null);
 
 // Reload history and file list whenever the active knowledge base changes
 watch(
@@ -128,6 +162,7 @@ watch(
   () => {
     loadHistory();
     loadFiles();
+    activeSummaryFile.value = null;
   },
   { immediate: true }
 );
@@ -180,6 +215,7 @@ async function handleSend() {
         if (idx !== -1) {
           messages.value[idx].answer = messages.value[idx].answer
             .replace("[SOURCE_USED]", "")
+            .replace("[WEB_USED]", "")
             .trimEnd();
           messages.value[idx].streaming = false;
         }
@@ -220,9 +256,18 @@ async function handleDeleteFile(filename) {
   if (!confirm(`Delete "${filename}" and all its indexed content?`)) return;
   try {
     await deleteFile(props.kb.id, filename);
+    if (activeSummaryFile.value?.filename === filename) activeSummaryFile.value = null;
     await loadFiles();
   } catch (err) {
     alert(`Delete failed: ${err.response?.data?.detail || err.message}`);
+  }
+}
+
+function toggleSummary(file) {
+  if (activeSummaryFile.value?.id === file.id) {
+    activeSummaryFile.value = null;
+  } else {
+    activeSummaryFile.value = file;
   }
 }
 
@@ -584,6 +629,18 @@ function resetTextarea() {
   font-weight: 500;
 }
 
+.file-chip-name.has-summary {
+  cursor: pointer;
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.file-chip-name.has-summary:hover {
+  opacity: 0.8;
+}
+
 .file-chip-count {
   color: var(--color-text-muted);
   font-size: 11px;
@@ -608,6 +665,56 @@ function resetTextarea() {
 .file-chip-delete:hover {
   background: #fee2e2;
   color: #ef4444;
+}
+
+/* ── Summary panel ── */
+.summary-panel {
+  padding: 10px 24px;
+  background: #fffbeb;
+  border-bottom: 1px solid #fde68a;
+  flex-shrink: 0;
+}
+
+.summary-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.summary-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.summary-panel-close {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: transparent;
+  color: #92400e;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.summary-panel-close:hover {
+  background: #fde68a;
+}
+
+.summary-panel-body {
+  font-size: 13px;
+  color: #78350f;
+  line-height: 1.65;
+}
+
+.summary-pending {
+  font-style: italic;
+  color: #a16207;
 }
 
 /* ── Sources ── */
@@ -635,14 +742,26 @@ function resetTextarea() {
   align-items: flex-start;
   gap: 7px;
   padding: 7px 10px;
-  background: #f8fafc;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   transition: background 0.1s;
 }
 
-.source-item:hover {
+.source-doc {
+  background: #f8fafc;
+}
+
+.source-doc:hover {
   background: #f1f5f9;
+}
+
+.source-web {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.source-web:hover {
+  background: #dcfce7;
 }
 
 .source-icon {
@@ -662,6 +781,31 @@ function resetTextarea() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.source-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #15803d;
+  text-decoration: none;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-title:hover {
+  text-decoration: underline;
+}
+
+.source-url {
+  font-size: 10px;
+  color: #86efac;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+  color: #4ade80;
 }
 
 .source-preview {
