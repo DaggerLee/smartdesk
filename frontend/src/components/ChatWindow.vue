@@ -101,12 +101,14 @@
                     <!-- Web source layout -->
                     <template v-else>
                       <a
+                        v-if="src.url"
                         class="source-title"
                         :href="src.url"
                         target="_blank"
                         rel="noopener noreferrer"
                       >{{ src.title }}</a>
-                      <div class="source-url">{{ src.url }}</div>
+                      <span v-else class="source-title-plain">{{ src.title }}</span>
+                      <div v-if="src.url" class="source-url">{{ src.url }}</div>
                       <div v-if="src.snippet" class="source-preview">{{ src.snippet }}</div>
                     </template>
                   </div>

@@ -15,11 +15,13 @@ An AI-powered enterprise knowledge base and customer support assistant built wit
 - 📚 **Knowledge Base Management** — Create multiple knowledge bases, each isolated per user
 - 📄 **Document Ingestion** — Upload PDF and TXT files; automatically parsed, chunked, and indexed
 - 🔍 **RAG Pipeline** — Semantic search with ChromaDB vector storage + Gemini generation
-- 🌐 **Tool Use / Web Search** — When documents lack sufficient context, automatically searches the web to supplement answers
-- 📝 **Document Auto-Summary** — Generates a 3-5 sentence summary for each uploaded file
+- 🌐 **Tool Use / Web Search** — When documents lack sufficient context, automatically falls back to DuckDuckGo web search
+- 🌤️ **Real-Time Weather** — Weather queries fetch live data (temperature, humidity, wind) from wttr.in — no API key needed
+- 📝 **Document Auto-Summary** — Generates a 3-5 sentence summary for each uploaded file in the background
 - ⚡ **Streaming Responses** — SSE-based token-by-token streaming, like ChatGPT
-- 🔗 **Source Citation** — Answers show exactly which document or web source they came from
-- 🧠 **Multi-Turn Memory** — AI remembers the last 5 messages for context-aware follow-up questions
+- 🔗 **Smart Source Citation** — Answers show the exact document or web source used; AI synthesizes naturally without saying "according to search results"
+- 🧠 **Multi-Turn Memory** — AI remembers the last 5 messages; classifies follow-ups, format changes, and greetings to route intelligently
+- 🌍 **Multilingual** — Responds in whatever language the user writes in; handles language-switch instructions ("reply in Japanese") correctly
 - 🔐 **JWT Authentication** — User registration/login with bcrypt password hashing; each user's data is fully isolated
 - 🐳 **Docker Deployment** — One-command startup with docker-compose
 
@@ -70,15 +72,17 @@ Open http://localhost:5173
 ```
 User Query
     ↓
-Vue 3 Frontend (Nginx)
+Message Classifier (conversational / followup / meta / question)
     ↓
-FastAPI Backend (JWT Auth)
+Vue 3 Frontend (Nginx) → FastAPI Backend (JWT Auth)
     ↓
-RAG Quality Check
-    ├── Sufficient → ChromaDB retrieval → Gemini (stream)
-    └── Insufficient → Web Search (googlesearch) → Gemini (stream)
+RAG Quality Check (ChromaDB cosine distance threshold)
+    ├── Sufficient  → ChromaDB context → Gemini (stream)
+    └── Insufficient → Weather query? → wttr.in real-time data
+                     → Other query?   → DuckDuckGo web search
+                     → Gemini (stream)
     ↓
-Streaming SSE Response + Source Citation
+SSE Stream → [SOURCE_USED] / [WEB_USED] markers → Source Cards
 ```
 
 ## API Endpoints

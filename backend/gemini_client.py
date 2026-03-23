@@ -41,8 +41,20 @@ def _build_prompt(
     context: List[str],
     history: list = None,
     web_results: list = None,
+    msg_type: str = "question",
 ) -> str:
-    """Build the RAG prompt from question, retrieved chunks, conversation history, and optional web results."""
+    """Build the RAG prompt from question, retrieved chunks, conversation history, and optional web results.
+
+    msg_type controls which prompt branch is used:
+      'conversational' — greeting / acknowledgment
+      'meta'           — format or language instruction
+      'followup'       — follow-up referencing previous context
+      'question'       — normal new question (default)
+    """
+    language_rule = (
+        "Respond in the same language the user used in their current message."
+    )
+
     history_block = ""
     if history:
         lines = ["Previous conversation:"]
@@ -53,7 +65,7 @@ def _build_prompt(
 
     web_block = ""
     if web_results:
-        lines = ["Web search results (supplementary — use when documents lack sufficient information):"]
+        lines = ["Web search results (supplementary):"]
         for i, r in enumerate(web_results, 1):
             lines.append(f"{i}. {r.get('title', 'Untitled')}")
             if r.get("snippet"):
@@ -61,51 +73,96 @@ def _build_prompt(
             lines.append(f"   URL: {r.get('url', '')}")
         web_block = "\n".join(lines) + "\n\n"
 
+    base = "You are a professional enterprise customer service assistant. "
+
+    # ── Conversational: greeting / acknowledgment ─────────────────────────────
+    if msg_type == "conversational":
+        return (
+            f"{base}"
+            "The user sent a short conversational message (greeting, acknowledgment, etc.). "
+            "Respond briefly and naturally — one or two sentences at most. "
+            f"Do not search for information or reference documents. {language_rule}\n\n"
+            f"{history_block}"
+            f"User: {question}"
+        )
+
+    # ── Meta: format / language instruction ───────────────────────────────────
+    if msg_type == "meta":
+        return (
+            f"{base}"
+            "The user is giving a format or language instruction, not asking a new question. "
+            "Apply the instruction to your most recent answer in the conversation history above. "
+            "Do not treat the instruction itself as a question to answer. "
+            "Do not produce translations or word lists. "
+            f"{language_rule}\n\n"
+            f"{history_block}"
+            f"Instruction: {question}"
+        )
+
+    # ── Follow-up: references previous context ────────────────────────────────
+    if msg_type == "followup":
+        context_block = ""
+        if context:
+            context_block = "Relevant document context:\n" + "\n\n---\n\n".join(context) + "\n\n"
+        return (
+            f"{base}"
+            "The user is following up on the previous conversation. "
+            "Use the conversation history and any document context below to give a thorough answer. "
+            f"Do not make up content. {language_rule}\n\n"
+            f"{history_block}"
+            f"{context_block}"
+            f"Follow-up: {question}"
+        )
+
+    # ── Normal question ───────────────────────────────────────────────────────
     if context:
         context_text = "\n\n---\n\n".join(context)
         web_instruction = (
-            "You may also reference the web search results below to fill any gaps. "
-            "If you use web results, append exactly [WEB_USED] at the very end (after [SOURCE_USED] if present).\n"
+            "Additional background information is also provided below. "
+            "Incorporate it naturally if it helps.\n"
+            "If you use any of this background information, append exactly [WEB_USED] at the "
+            "very end of your response (after [SOURCE_USED] if present).\n"
             if web_results else ""
         )
         return (
-            "You are a professional enterprise customer service assistant. "
-            "Answer the user's question using the reference material and conversation history below.\n"
-            "If the reference material contains relevant information, use it to answer "
-            "and append exactly [SOURCE_USED] at the very end of your response (no space before it).\n"
+            f"{base}"
+            "Use the background material below to answer the user's question. "
+            "Write a natural, direct answer — do NOT mention 'the documents', 'search results', "
+            "'reference material', or any other source names in your response. "
+            "Just answer as if you already know the information.\n"
+            "If you used the document context, append exactly [SOURCE_USED] at the very end "
+            "(no space before it, not visible to the user).\n"
             f"{web_instruction}"
-            "If the reference material does not contain relevant information, answer from general knowledge "
-            "and do NOT append [SOURCE_USED].\n"
-            "Do not make up content. Always respond in English.\n\n"
+            "If the material is not relevant, answer from general knowledge without any marker.\n"
+            f"Do not make up content. {language_rule}\n\n"
             f"{history_block}"
-            f"Current question: {question}\n\n"
-            f"Relevant context from documents:\n{context_text}\n\n"
+            f"Question: {question}\n\n"
+            f"Background material:\n{context_text}\n\n"
             f"{web_block}"
-            "Please answer based on the context above:"
+            "Answer:"
         )
 
     if web_results:
-        # No document context available — rely on web results only
         return (
-            "You are a professional enterprise customer service assistant. "
-            "The knowledge base does not contain documents relevant to this question. "
-            "Use the web search results below to answer if applicable. "
+            f"{base}"
+            "Use the background information below to answer the user's question. "
+            "Write a natural, direct answer — do NOT say 'according to search results', "
+            "'based on web results', or anything similar. Just answer directly.\n"
             "Append exactly [WEB_USED] at the very end of your response.\n"
-            "Do not make up content. Always respond in English.\n\n"
+            f"Do not make up content. {language_rule}\n\n"
             f"{history_block}"
-            f"Current question: {question}\n\n"
+            f"Question: {question}\n\n"
             f"{web_block}"
-            "Please answer based on the web search results above:"
+            "Answer:"
         )
 
     return (
-        "You are a professional enterprise customer service assistant. "
-        "There is currently no relevant material in the knowledge base.\n"
-        "Please inform the user that no relevant content was found, "
-        "and suggest they upload related documents before asking again. "
-        "Always respond in English.\n\n"
+        f"{base}"
+        "There is currently no relevant material in the knowledge base. "
+        "Inform the user that no relevant content was found and suggest uploading related documents. "
+        f"{language_rule}\n\n"
         f"{history_block}"
-        f"User question: {question}"
+        f"Question: {question}"
     )
 
 
@@ -114,11 +171,12 @@ def generate_answer(
     context: List[str],
     history: list = None,
     web_results: list = None,
+    msg_type: str = "question",
 ) -> str:
     """Generate a complete answer (non-streaming)."""
     model = _find_model()
     url = f"{_BASE}/{model}:generateContent?key={_API_KEY}"
-    prompt = _build_prompt(question, context, history, web_results)
+    prompt = _build_prompt(question, context, history, web_results, msg_type)
 
     resp = requests.post(
         url,
@@ -134,11 +192,12 @@ def generate_answer_stream(
     context: List[str],
     history: list = None,
     web_results: list = None,
+    msg_type: str = "question",
 ) -> Generator[str, None, None]:
     """Generate an answer as a stream, yielding text chunks one at a time."""
     model = _find_model()
     url = f"{_BASE}/{model}:streamGenerateContent?alt=sse&key={_API_KEY}"
-    prompt = _build_prompt(question, context, history, web_results)
+    prompt = _build_prompt(question, context, history, web_results, msg_type)
 
     with requests.post(
         url,

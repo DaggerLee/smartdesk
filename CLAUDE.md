@@ -1,8 +1,9 @@
 # SmartDesk — Enterprise Knowledge Assistant
 
 AI-powered RAG chat interface. Users create knowledge bases, upload documents (PDF/TXT),
-and ask questions answered by Gemini using ChromaDB vector search. Falls back to Google
-web search when document context is insufficient.
+and ask questions answered by Gemini using ChromaDB vector search. Falls back to DuckDuckGo
+web search or wttr.in weather data when document context is insufficient. Smart message
+classification routes greetings, follow-ups, format instructions, and real questions differently.
 
 ---
 
@@ -78,7 +79,8 @@ smartdesk/
 | LLM | Google Gemini API (auto-selects best available model) |
 | Vector DB | ChromaDB (local persistent, ONNX embeddings — no PyTorch) |
 | Relational DB | SQLite via SQLAlchemy |
-| Web search | googlesearch-python (no API key required) |
+| Web search | ddgs / DuckDuckGo (no API key required) |
+| Weather | wttr.in JSON API (no API key required) |
 | PDF parsing | pypdf |
 | Frontend | Vue 3 + Vite |
 | HTTP client | Axios (REST) + fetch (SSE streaming) |
@@ -104,7 +106,7 @@ existing databases without data loss.
 
 ### Authentication (auth.py + routers/auth.py)
 
-- Passwords hashed with bcrypt via `passlib`
+- Passwords hashed with bcrypt directly (`bcrypt.hashpw` / `bcrypt.checkpw` — passlib removed, incompatible with bcrypt 4.x+)
 - JWTs signed with HS256 via `python-jose`, expire after 7 days
 - `get_current_user` is a FastAPI `Depends` injected into every protected route
 - `SECRET_KEY` comes from env var; defaults to a dev placeholder (must change in prod)
@@ -125,14 +127,15 @@ existing databases without data loss.
 1. Validate KB exists, message non-empty
 2. Fetch last 5 conversations (multi-turn memory)
 3. Query ChromaDB → top-5 chunks **with cosine distances**
-4. `assess_rag_quality(results)` — if best distance ≥ 1.0, RAG is insufficient
-5. If insufficient → `web_search(question)` via googlesearch-python
-6. Build prompt with `_build_prompt(question, context, history, web_results)`
-7. Stream Gemini response via SSE
-8. Detect `[SOURCE_USED]` / `[WEB_USED]` markers in accumulated response
-9. Send typed sources JSON: `{sources: [{type, ...}, ...]}`
-10. Strip markers, save clean answer to DB
-11. Send `[DONE]`
+4. `_classify(message)` → `conversational` / `meta` / `followup` / `question`
+5. `assess_rag_quality(results)` — if best cosine distance ≥ 0.8, RAG is insufficient
+6. If insufficient → weather query? → `fetch_weather()` via wttr.in; else `web_search()` via ddgs
+7. Build prompt with `_build_prompt(question, context, history, web_results, msg_type)`
+8. Stream Gemini response via SSE
+9. Detect `[SOURCE_USED]` / `[WEB_USED]` markers in accumulated response
+10. Send typed sources JSON: `{sources: [{type, ...}, ...]}`
+11. Strip markers, save clean answer to DB
+12. Send `[DONE]`
 
 ### Source Types (SSE payload)
 
@@ -153,8 +156,11 @@ existing databases without data loss.
 ### Gemini Client (gemini_client.py)
 
 - `_find_model()` — auto-discovers first model supporting `generateContent`, cached
-- `_build_prompt(question, context, history, web_results)` — handles 4 cases:
-  - docs + web, docs only, web only, no context
+- `_build_prompt(question, context, history, web_results, msg_type)` — 4 branches by `msg_type`:
+  - `conversational` — brief natural reply, no RAG
+  - `meta` — apply format/language instruction to last answer in history
+  - `followup` — answer using history + doc context
+  - `question` — full RAG: docs + optional web results
 - `generate_answer_stream()` — SSE streaming generator
 - `generate_answer()` — blocking, used for summaries
 - `generate_summary(text)` — summarizes first 4000 chars in 3-5 sentences
@@ -176,14 +182,31 @@ Upload endpoint uses FastAPI `BackgroundTasks`:
 - `query_documents()` returns `[{text, filename, chunk_index, distance}]`
   — `distance` is cosine distance [0, 2], lower = more relevant
 
+### Message Classification (chat.py)
+
+`_classify(message)` returns one of four types before any RAG work:
+- `conversational` — greetings / acknowledgments (hi, thanks, ok) → skip RAG entirely
+- `meta` — format or language instruction (summarize, reply in Japanese) → re-run last answer with instruction
+- `followup` — references prior context (tell me more, what does that mean) → use last question as RAG query
+- `question` — normal new question → full RAG pipeline
+
+**Important:** `\b` word boundaries don't work with Chinese characters in Python regex.
+Chinese patterns are listed separately without `\b` anchors.
+
 ### Tools (tools.py)
 
 ```python
-RELEVANCE_THRESHOLD = 1.0  # tweak here to make web search trigger more/less often
+RELEVANCE_THRESHOLD = 0.8  # ChromaDB cosine distance; lower = more relevant
 
-assess_rag_quality(results) -> bool   # True = docs sufficient, False = search web
-web_search(query, num_results=5) -> list[dict]  # fails silently, returns []
+assess_rag_quality(results) -> bool      # True = docs sufficient, False = trigger external tools
+is_weather_query(message) -> bool        # detects weather-related queries in EN/ZH
+fetch_weather(message) -> Optional[str] # wttr.in JSON API → formatted string (temp/humidity/wind)
+web_search(query, num_results=5) -> list[dict]  # DuckDuckGo via ddgs; fails silently, returns []
 ```
+
+Weather tool flow: `is_weather_query()` → `_extract_location()` → `wttr.in/{location}?format=j1`
+Falls back to `web_search()` if wttr.in fails. Result passed as a fake web result with no URL
+(source card renders as plain text, not a clickable link).
 
 ---
 
@@ -237,8 +260,11 @@ Streaming:
 - [x] Source citation: shown only when `[SOURCE_USED]` detected
 - [x] Multi-turn conversation memory (last 5 turns injected into prompt)
 - [x] Chat history: persisted to SQLite, clearable
-- [x] Tool Use — Web search: triggers when RAG relevance insufficient
+- [x] Tool Use — Web search: triggers when RAG relevance insufficient (DuckDuckGo, no API key)
+- [x] Tool Use — Real-time weather: wttr.in JSON API for weather queries (temp, humidity, wind, UV)
 - [x] Tool Use — Document summary: auto-generated in background after upload
+- [x] Smart message classification: conversational / meta / followup / question routing
+- [x] Multilingual: responds in user's language; language-switch instructions handled correctly
 - [x] Typed sources UI: 📄 Document vs 🌐 Web Search with distinct styling
 - [x] File summary panel: click file chip name to expand summary
 - [x] Docker Compose: one-command deployment, nginx SSE proxy, named volume persistence
