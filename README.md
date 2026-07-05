@@ -1,8 +1,18 @@
 # 🤖 SmartDesk — Enterprise Knowledge Assistant
 
-An AI-powered enterprise knowledge base and customer support assistant built with RAG (Retrieval-Augmented Generation). Upload your documents and get instant, accurate answers powered by Google Gemini — with full user authentication and one-command Docker deployment.
+An AI-powered enterprise knowledge base assistant. Upload documents, get accurate answers grounded in your content — with JWT auth, streaming SSE, and one-command Docker deployment.
 
-## Screenshots
+## v2: Agentic Upgrade (in progress)
+
+v2 refactors the linear RAG pipeline into a measurable, maintainable agentic system: an LLM **router** dispatches each query to the right path (direct / rag / agent), a hand-written **agent loop** executes multi-turn tool use (retrieve + web search) via Gemini native function calling, **self-healing** mechanisms retry on tool errors and low-relevance retrievals, and a benchmark-driven **eval harness** tracks faithfulness, answer relevancy, and retrieval recall. See [CLAUDE.md — v2 Target Architecture](CLAUDE.md#v2-target-architecture) for the full design.
+
+**Current progress:** W1 complete (query router + agent loop + native function calling + JSONL tracing + 17 unit tests) — W2 in progress (self-healing three mechanisms + MCP server).
+
+Full architecture docs and eval results coming with v2.0.
+
+---
+
+## v1 (baseline) — Screenshots
 
 ### Main Interface
 ![Main](screenshot-main.png)
@@ -10,7 +20,7 @@ An AI-powered enterprise knowledge base and customer support assistant built wit
 ### AI-Powered Q&A with Source Citation
 ![Chat](screenshot-chat.png)
 
-## Features
+## v1 (baseline) — Features
 
 - 📚 **Knowledge Base Management** — Create multiple knowledge bases, each isolated per user
 - 📄 **Document Ingestion** — Upload PDF and TXT files; automatically parsed, chunked, and indexed
@@ -25,7 +35,7 @@ An AI-powered enterprise knowledge base and customer support assistant built wit
 - 🔐 **JWT Authentication** — User registration/login with bcrypt password hashing; each user's data is fully isolated
 - 🐳 **Docker Deployment** — One-command startup with docker-compose
 
-## Tech Stack
+## v1 (baseline) — Tech Stack
 
 | Layer | Technologies |
 |-------|-------------|
@@ -37,7 +47,7 @@ An AI-powered enterprise knowledge base and customer support assistant built wit
 | Auth | JWT (HS256) + bcrypt |
 | Deployment | Docker, docker-compose |
 
-## Quick Start (Docker)
+## Quick Start (Docker) — works for both v1 and v2
 
 ```bash
 git clone https://github.com/DaggerLee/smartdesk.git
@@ -67,7 +77,7 @@ npm run dev
 
 Open http://localhost:5173
 
-## Architecture
+## v1 (baseline) — Architecture
 
 ```
 User Query
@@ -85,7 +95,7 @@ RAG Quality Check (ChromaDB cosine distance threshold)
 SSE Stream → [SOURCE_USED] / [WEB_USED] markers → Source Cards
 ```
 
-## API Endpoints
+## v1 (baseline) — API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
