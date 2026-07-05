@@ -5,12 +5,9 @@ from typing import List, Optional
 
 import requests as http
 
-logger = logging.getLogger(__name__)
+from config import RELEVANCE_THRESHOLD
 
-# ChromaDB cosine distance threshold (range 0-2).
-# In practice, even unrelated docs can score below 1.0 with the ONNX embedding model,
-# so 0.8 is a more reliable cutoff for "actually relevant" content.
-RELEVANCE_THRESHOLD = 0.8
+logger = logging.getLogger(__name__)
 
 # Detects weather-related queries
 _WEATHER_RE = re.compile(

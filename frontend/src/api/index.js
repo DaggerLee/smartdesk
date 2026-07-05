@@ -94,7 +94,7 @@ export function uploadFile(kbId, file, onProgress) {
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
-export async function sendMessageStream(kbId, message, onChunk, onSources, onDone) {
+export async function sendMessageStream(kbId, message, onChunk, onSources, onDone, onStatus) {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     headers: {
@@ -139,6 +139,8 @@ export async function sendMessageStream(kbId, message, onChunk, onSources, onDon
           onChunk?.(parsed);
         } else if (parsed.sources) {
           onSources?.(parsed.sources);
+        } else if (parsed.status) {
+          onStatus?.(parsed.status);
         }
       } catch {
         // skip malformed lines

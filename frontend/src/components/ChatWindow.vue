@@ -80,6 +80,7 @@
           <div class="avatar ai-avatar">🤖</div>
           <div class="ai-content">
             <div class="bubble ai-bubble" v-html="renderMessageContent(msg)"></div>
+            <div v-if="msg.streaming && msg.statusText" class="status-indicator">{{ msg.statusText }}</div>
             <!-- Sources -->
             <div v-if="msg.sources && msg.sources.length > 0" class="sources">
               <div class="sources-label">Sources</div>
@@ -193,7 +194,7 @@ async function handleSend() {
 
   // Optimistically add the user message with an empty streaming answer
   const tempId = Date.now();
-  messages.value.push({ id: tempId, question: text, answer: "", sources: [], streaming: true });
+  messages.value.push({ id: tempId, question: text, answer: "", sources: [], streaming: true, statusText: "" });
   await nextTick();
   scrollToBottom();
 
@@ -205,6 +206,7 @@ async function handleSend() {
         const idx = messages.value.findIndex((m) => m.id === tempId);
         if (idx !== -1) {
           messages.value[idx].answer += chunk;
+          messages.value[idx].statusText = "";
           scrollToBottom();
         }
       },
@@ -220,7 +222,12 @@ async function handleSend() {
             .replace("[WEB_USED]", "")
             .trimEnd();
           messages.value[idx].streaming = false;
+          messages.value[idx].statusText = "";
         }
+      },
+      (status) => {
+        const idx = messages.value.findIndex((m) => m.id === tempId);
+        if (idx !== -1) messages.value[idx].statusText = status;
       }
     );
   } catch (err) {
@@ -819,5 +826,13 @@ function resetTextarea() {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+.status-indicator {
+  font-size: 0.78rem;
+  color: #888;
+  font-style: italic;
+  margin-top: 4px;
+  padding-left: 2px;
 }
 </style>

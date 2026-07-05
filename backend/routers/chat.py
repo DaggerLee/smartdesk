@@ -8,9 +8,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import chroma_client
+from agent.loop import SYSTEM_PROMPT, run_agent
+from agent.router import route
 from auth import get_current_user
-from database import get_db
+from database import SessionLocal, get_db
 from gemini_client import generate_answer_stream
+from llm.client import stream as llm_stream
 from models import Conversation, KnowledgeBase, User
 from tools import assess_rag_quality, fetch_weather, is_weather_query, web_search
 
@@ -109,6 +112,55 @@ def chat_stream(
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    path = route(body.message)
+    print(f"[Chat] Route: {path!r} — {body.message!r}")
+
+    _sse_headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+    # ── direct: conversational reply, no retrieval ────────────────────────────
+    if path == "direct":
+        def generate_direct() -> Generator[str, None, None]:
+            msgs = [{"role": "user", "parts": [{"text": body.message}]}]
+            chunks: List[str] = []
+            for chunk in llm_stream(msgs):
+                chunks.append(chunk)
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            conv = Conversation(kb_id=body.kb_id, question=body.message, answer="".join(chunks))
+            db.add(conv)
+            db.commit()
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(generate_direct(), media_type="text/event-stream", headers=_sse_headers)
+
+    # ── agent: multi-turn tool loop ───────────────────────────────────────────
+    if path == "agent":
+        def generate_agent() -> Generator[str, None, None]:
+            final_msgs: Optional[List[dict]] = None
+            for event in run_agent(body.message, body.kb_id):
+                if event.type == "tool_call":
+                    name = event.data["name"]
+                    label = "Searching knowledge base…" if name == "retrieve" else "Searching the web…"
+                    yield f"data: {json.dumps({'status': label}, ensure_ascii=False)}\n\n"
+                elif event.type == "final":
+                    final_msgs = event.data.get("messages")
+
+            chunks: List[str] = []
+            if final_msgs:
+                for chunk in llm_stream(final_msgs, system=SYSTEM_PROMPT):
+                    chunks.append(chunk)
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+            _db = SessionLocal()
+            try:
+                _db.add(Conversation(
+                    kb_id=body.kb_id, question=body.message, answer="".join(chunks)
+                ))
+                _db.commit()
+            finally:
+                _db.close()
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(generate_agent(), media_type="text/event-stream", headers=_sse_headers)
+
+    # ── rag: v1 existing chain (unchanged) ───────────────────────────────────
     # Fetch the last 5 conversations for memory context (oldest first)
     recent_history = (
         db.query(Conversation)
@@ -212,11 +264,7 @@ def chat_stream(
         db.commit()
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers)
 
 
 @router.get("/history/{kb_id}", response_model=List[HistoryItem])

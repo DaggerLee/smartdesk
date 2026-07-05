@@ -5,6 +5,8 @@ import chromadb
 from chromadb.config import Settings
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
+import config
+
 # Uses ChromaDB's built-in ONNX embedding model — no PyTorch required
 _embedding_fn = DefaultEmbeddingFunction()
 
@@ -16,7 +18,7 @@ _client = chromadb.PersistentClient(
 
 
 def _collection_name(kb_id: int) -> str:
-    return f"kb_{kb_id}"
+    return f"kb_{str(kb_id)}"
 
 
 def _get_or_create(kb_id: int):
@@ -28,7 +30,7 @@ def _get_or_create(kb_id: int):
 
 # ── Text Chunking ─────────────────────────────────────────────────────────────
 
-def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
+def chunk_text(text: str, chunk_size: int = config.CHUNK_SIZE, overlap: int = config.CHUNK_OVERLAP) -> List[str]:
     """Split long text into overlapping chunks, preferring paragraph/sentence boundaries."""
     text = re.sub(r"\n{3,}", "\n\n", text.strip())
     chunks: List[str] = []
@@ -69,7 +71,7 @@ def add_documents(kb_id: int, texts: List[str], ids: List[str], metadatas: List[
     collection.add(documents=texts, ids=ids, metadatas=metadatas)
 
 
-def query_documents(kb_id: int, query: str, n_results: int = 5) -> List[dict]:
+def query_documents(kb_id: int, query: str, n_results: int = config.TOP_K) -> List[dict]:
     """Retrieve the most relevant document chunks for a query.
 
     Returns a list of dicts with keys: text, filename, chunk_index, distance.

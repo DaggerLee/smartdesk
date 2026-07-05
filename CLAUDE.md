@@ -1,9 +1,61 @@
-# SmartDesk — Enterprise Knowledge Assistant
+# CLAUDE.md
 
-AI-powered RAG chat interface. Users create knowledge bases, upload documents (PDF/TXT),
-and ask questions answered by Gemini using ChromaDB vector search. Falls back to DuckDuckGo
-web search or wttr.in weather data when document context is insufficient. Smart message
-classification routes greetings, follow-ups, format instructions, and real questions differently.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# SmartDesk — Enterprise Knowledge Assistant (v2 refactor in progress)
+
+v1 is a RAG knowledge assistant (FastAPI + ChromaDB + Gemini API + SSE streaming + JWT + Docker).
+v2 goal: refactor the linear RAG pipeline into a measurable, maintainable agentic system as the centrepiece portfolio project for the 2026 job search.
+The baseline has been tagged `v1-baseline`; that tag and its code must not be modified (used for before/after comparison).
+
+---
+
+## Collaboration Rules (Mandatory)
+
+- **Core modules** (agent loop, reflection logic, eval rubric and gold-set design): output design proposal + interface signatures + pseudocode only, then stop and wait for the user to implement; review and debug after the user finishes. Do not write the full implementation of these files on the user's behalf.
+- **Can implement directly**: scaffolding, configuration, SSE/async glue code, unit tests, refactoring, README, bug fixes.
+- Definition of "module complete": tests pass + the user can explain the design decisions without looking at the code.
+- Git: one branch per module (feat/router, feat/agent-loop, feat/self-healing, feat/eval…), commit messages in English, run all tests before merging.
+- **Communicate with the user in Chinese**; all code, comments, API strings, and file content in English.
+
+---
+
+## v2 Target Architecture
+
+1. **Router (workflow layer)**: cheap model classifies query → three paths: direct / rag / agent
+2. **Agent core**: hand-written model + tools loop (tools: retrieve / web_search / optional code_exec), max_turns as a safety cap
+3. **Reflection / self-healing (three mechanisms)**:
+   - Tool error fed back for retry (≤ 2 attempts)
+   - Low retrieval relevance → rewrite query and re-retrieve
+   - Citation groundedness check fails → revise answer
+4. **Eval**: RAGAS (faithfulness / answer relevancy / context precision / recall) + retrieval recall@k + binary rubric LLM-as-judge + e2e pass rate
+5. **Observability**: structured JSON trace written for every LLM/tool call; per-step latency/cost tracked
+6. **MCP Server**: FastMCP exposes the tool layer (standalone directory, extractable to a separate repo later)
+7. **P1 (W5)**: LangGraph migration (checkpointing + interrupt for HITL), guardrails (prompt injection filtering / PII redaction)
+
+---
+
+## Sprint Plan
+
+| Week | Dates | Goal |
+|------|-------|------|
+| W0 | 7/1–7/5 | Current-state audit + module interface design (read-only, no business code) |
+| W1 | 7/6–12 | Router + hand-written agent loop; existing RAG demoted to a retrieve tool |
+| W2 | 7/13–19 | Self-healing three mechanisms + MCP server |
+| W3 | 7/20–26 | Gold set (30–50 items) + eval harness |
+| W4 | 7/27–8/2 | Error analysis + fix top offenders + README v1 |
+| W5 | 8/3–9 | Tracing/alerting + guardrails + LangGraph/HITL + demo GIF |
+
+**Fallback rule**: if loop + self-healing are not working by the end of W2 → drop LangGraph migration and anomaly detection; prioritise the P0 trio (loop + eval + error analysis) for delivery.
+
+---
+
+## Technical Constraints
+
+- Python 3.11+, FastAPI; keep the existing JWT / Docker structure runnable at all times
+- All LLM calls wrapped in a single client module (switching providers or migrating to LangGraph must not touch business code)
+- Every LLM/tool call must write a trace log entry (data source for W4 error analysis)
+- Secrets via `.env` only; never committed to git
 
 ---
 
@@ -19,13 +71,19 @@ docker-compose up --build
 **Local dev:**
 ```bash
 # Backend
-cd backend && uvicorn main:app --reload --port 8000
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
 
 # Frontend (separate terminal)
-cd frontend && npm run dev
+cd frontend
+npm install
+npm run dev
 ```
 
 Frontend dev server: http://localhost:5173 (Vite proxies /api to backend :8000)
+
+**Health check:** `GET http://localhost:8000/health` — confirms API is running and `GEMINI_API_KEY` is set.
 
 ---
 
@@ -33,30 +91,44 @@ Frontend dev server: http://localhost:5173 (Vite proxies /api to backend :8000)
 
 ```
 smartdesk/
-├── docker-compose.yml           # Orchestrates backend + frontend services           # Orchestrates backend + frontend services
+├── docker-compose.yml           # Orchestrates backend + frontend services
 ├── .env.example                 # Template: copy to .env and fill GEMINI_API_KEY
 ├── backend/
 │   ├── Dockerfile
-│   ├── .dockerignore
 │   ├── main.py                  # FastAPI app, CORS, startup DB migration
 │   ├── database.py              # SQLAlchemy SQLite engine + SessionLocal
-│   ├── models.py                # ORM: KnowledgeBase, Conversation, UploadedFile
+│   ├── models.py                # ORM: User, KnowledgeBase, Conversation, UploadedFile
 │   ├── chroma_client.py         # ChromaDB ops: chunk, add, query, delete
 │   ├── gemini_client.py         # Gemini API: streaming, non-streaming, summarize
-│   ├── tools.py                 # RAG quality check + Google web search
+│   ├── tools.py                 # RAG quality check + weather + web search
 │   ├── auth.py                  # JWT utils: hash_password, create_access_token, get_current_user
+│   ├── config.py                # Centralised constants (TOP_K, thresholds, API config)
 │   ├── requirements.txt
-│   ├── .env                     # GEMINI_API_KEY (dev only, not used in Docker)
-│   ├── data/                    # Runtime data — gitignored, Docker volume mounted here
-│   │   ├── smartdesk.db         # SQLite database
-│   │   └── chroma_data/         # ChromaDB persistent vector store
+│   ├── agent/
+│   │   ├── loop.py              # Agent main loop — yields AgentEvent stream
+│   │   ├── router.py            # Query router — classifies to direct/rag/agent
+│   │   ├── state.py             # AgentState dataclass
+│   │   └── tools/
+│   │       ├── base.py          # Tool Protocol definition
+│   │       ├── retrieve.py      # ChromaDB retrieval tool
+│   │       └── web_search.py    # DuckDuckGo web search tool
+│   ├── llm/
+│   │   ├── client.py            # Thin Gemini REST wrapper: complete() + stream()
+│   │   └── trace.py             # JSONL trace logger with span() context manager
+│   ├── scripts/
+│   │   └── smoke_test_llm.py    # Real-API smoke tests (3 scenarios)
+│   ├── tests/
+│   │   ├── conftest.py          # Shared pytest fixtures
+│   │   ├── test_loop.py         # Agent loop event-sequence tests
+│   │   ├── test_router.py       # Router classification + fallback tests
+│   │   ├── test_state.py        # AgentState tests
+│   │   └── test_config.py       # Config tests
 │   └── routers/
 │       ├── auth.py              # POST /api/auth/register, POST /api/auth/login
-│       ├── chat.py              # POST /api/chat/stream, GET/DELETE /history
+│       ├── chat.py              # POST /api/chat/stream, GET/DELETE /api/chat/history/{kb_id}
 │       └── knowledge_base.py    # KB CRUD + file upload/list/delete
 ├── frontend/
 │   ├── Dockerfile               # Multi-stage: node build → nginx serve
-│   ├── .dockerignore
 │   ├── nginx.conf               # Serves SPA + proxies /api to backend (SSE-safe)
 │   └── src/
 │       ├── App.vue              # Root layout: sidebar + chat panel
@@ -91,18 +163,18 @@ smartdesk/
 ## Database Schema
 
 ```sql
-knowledge_bases  (id, name, description, created_at)
+users            (id, username, hashed_password, created_at)
+knowledge_bases  (id, name, description, created_at, user_id)
 conversations    (id, kb_id, question, answer, created_at)
 uploaded_files   (id, kb_id, filename, chunk_count, uploaded_at, summary)
 ```
 
-`summary` column was added after initial release. `main.py` runs a safe
-`ALTER TABLE uploaded_files ADD COLUMN summary TEXT` on startup to migrate
-existing databases without data loss.
+`summary` and `user_id` columns were added after initial release. `main.py` runs safe
+`ALTER TABLE` migrations on startup so existing databases are updated without data loss.
 
 ---
 
-## Backend Architecture
+## v1 Backend Architecture (baseline)
 
 ### Authentication (auth.py + routers/auth.py)
 
@@ -124,6 +196,13 @@ existing databases without data loss.
 
 ### RAG Pipeline (chat.py → POST /api/chat/stream)
 
+The endpoint now calls `route(query)` first and dispatches to one of three paths:
+
+- **direct**: plain conversational reply via `llm.client.stream()`, no retrieval
+- **rag**: existing v1 chain (unchanged — classify → retrieve → optional web search → stream)
+- **agent**: `run_agent()` loop → status SSE frames during tool calls → `llm.client.stream()` for final answer
+
+v1 rag chain detail:
 1. Validate KB exists, message non-empty
 2. Fetch last 5 conversations (multi-turn memory)
 3. Query ChromaDB → top-5 chunks **with cosine distances**
@@ -137,21 +216,14 @@ existing databases without data loss.
 11. Strip markers, save clean answer to DB
 12. Send `[DONE]`
 
-### Source Types (SSE payload)
+### SSE Frame Types
 
 ```json
-// Document source
-{"type": "document", "filename": "report.pdf", "preview": "first 80 chars..."}
-
-// Web source
-{"type": "web", "title": "Page Title", "url": "https://...", "snippet": "..."}
+"text chunk"                                          // plain string → onChunk
+{"sources": [{"type": "document"|"web", ...}]}        // sources → onSources
+{"status": "Searching knowledge base…"}               // agent progress → onStatus
+[DONE]                                                // stream complete → onDone
 ```
-
-### Prompt Markers
-
-- `[SOURCE_USED]` — Gemini appends this when it used document context
-- `[WEB_USED]` — Gemini appends this when it used web search results
-- Both are stripped from the answer before saving to DB and display
 
 ### Gemini Client (gemini_client.py)
 
@@ -165,13 +237,25 @@ existing databases without data loss.
 - `generate_answer()` — blocking, used for summaries
 - `generate_summary(text)` — summarizes first 4000 chars in 3-5 sentences
 
+### LLM Client (llm/client.py)
+
+Thin Gemini REST wrapper used by the agent layer:
+- `complete(messages, tools, system, temperature)` — non-streaming, returns `LLMResponse`
+- `stream(messages, system)` — streaming generator, yields text chunks
+- `LLMResponse(text, tool_calls, raw)` — parsed response type
+
+### Agent Loop (agent/loop.py)
+
+Think-act loop that yields `AgentEvent` objects:
+- `tool_call` — model requested a tool; SSE layer converts to a status frame
+- `tool_result` — tool returned; evidence accumulated into `state.evidence`
+- `final` — model produced a text answer; includes `messages` for re-streaming
+
 ### Document Summary Flow (knowledge_base.py)
 
 Upload endpoint uses FastAPI `BackgroundTasks`:
 1. Upload response returns immediately after ChromaDB indexing
-2. Background task `_generate_and_store_summary(file_id, text)` opens its own
-   `SessionLocal()` session (cannot reuse request session), calls `generate_summary()`,
-   writes result to `uploaded_files.summary`
+2. Background task `_generate_and_store_summary(file_id, text)` opens its own `SessionLocal()` (cannot reuse request session), calls `generate_summary()`, writes result to `uploaded_files.summary`
 
 ### ChromaDB (chroma_client.py)
 
@@ -179,34 +263,27 @@ Upload endpoint uses FastAPI `BackgroundTasks`:
 - DefaultEmbeddingFunction (ONNX, local, no external calls)
 - Chunk size: 800 chars, overlap: 100 chars
 - Prefers paragraph (`\n\n`) > sentence (`。.！？`) boundaries
-- `query_documents()` returns `[{text, filename, chunk_index, distance}]`
-  — `distance` is cosine distance [0, 2], lower = more relevant
+- `query_documents()` returns `[{text, filename, chunk_index, distance}]`; `distance` is cosine distance [0, 2], lower = more relevant
 
 ### Message Classification (chat.py)
 
 `_classify(message)` returns one of four types before any RAG work:
-- `conversational` — greetings / acknowledgments (hi, thanks, ok) → skip RAG entirely
-- `meta` — format or language instruction (summarize, reply in Japanese) → re-run last answer with instruction
-- `followup` — references prior context (tell me more, what does that mean) → use last question as RAG query
+- `conversational` — greetings / acknowledgments → skip RAG entirely
+- `meta` — format or language instruction → re-run last answer with instruction
+- `followup` — references prior context → use last question as RAG query
 - `question` — normal new question → full RAG pipeline
 
-**Important:** `\b` word boundaries don't work with Chinese characters in Python regex.
-Chinese patterns are listed separately without `\b` anchors.
+**Important:** `\b` word boundaries don't work with Chinese characters in Python regex. Chinese patterns are listed separately without `\b` anchors.
 
 ### Tools (tools.py)
 
 ```python
-RELEVANCE_THRESHOLD = 0.8  # ChromaDB cosine distance; lower = more relevant
-
-assess_rag_quality(results) -> bool      # True = docs sufficient, False = trigger external tools
-is_weather_query(message) -> bool        # detects weather-related queries in EN/ZH
-fetch_weather(message) -> Optional[str] # wttr.in JSON API → formatted string (temp/humidity/wind)
-web_search(query, num_results=5) -> list[dict]  # DuckDuckGo via ddgs; fails silently, returns []
+RELEVANCE_THRESHOLD = 0.8  # cosine distance; lower = more relevant
+assess_rag_quality(results) -> bool
+is_weather_query(message) -> bool
+fetch_weather(message) -> Optional[str]   # wttr.in JSON API
+web_search(query, num_results=5) -> list[dict]  # ddgs; fails silently → []
 ```
-
-Weather tool flow: `is_weather_query()` → `_extract_location()` → `wttr.in/{location}?format=j1`
-Falls back to `web_search()` if wttr.in fails. Result passed as a fake web result with no URL
-(source card renders as plain text, not a clickable link).
 
 ---
 
@@ -214,61 +291,15 @@ Falls back to `web_search()` if wttr.in fails. Result passed as a fake web resul
 
 ### ChatWindow.vue
 
-Key state:
-- `messages` — `[{id, question, answer, sources, streaming}]`
-- `uploadedFiles` — from `GET /api/knowledge-base/{kb_id}/files`
-- `activeSummaryFile` — the file whose summary panel is currently open
-
-Source rendering by `src.type`:
-- `"document"` → 📄 card (filename + preview), light gray background
-- `"web"` → 🌐 card (clickable title link + URL + snippet), light green background
-
-File chip summary:
-- Files with a summary show their name underlined+blue (clickable)
-- Clicking toggles `activeSummaryFile` → shows amber summary panel below files bar
-- Panel shows "generating…" if summary is still null
-
-Streaming:
-- `sendMessageStream()` in `api/index.js` uses `fetch()` + `ReadableStream`
-- Chunks arrive as `data: "text"`, sources as `data: {"sources":[...]}`
-- Blinking cursor `▋` rendered while `msg.streaming === true`
+- `messages` — `[{id, question, answer, sources, streaming, statusText}]`
+- `"document"` sources → 📄 card (gray); `"web"` sources → 🌐 card (green, clickable)
+- File chips: click filename → amber summary panel; shows "generating…" if still null
+- SSE chunks arrive as `data: "text"`, sources as `data: {"sources":[...]}`, agent progress as `data: {"status":"..."}`; blinking cursor `▋` while `streaming === true`
 
 ### API Client (api/index.js)
 
-- Axios instance at `/api` for all REST calls
-- Raw `fetch()` for SSE streaming (Axios doesn't support streaming)
-- `sendMessageStream(kbId, message, onChunk, onSources, onDone)`
-
----
-
-## Conventions & Rules
-
-- **All file content in English** — comments, UI text, API strings, this file
-- **Communicate with user in Chinese**
-- No over-engineering: no extra abstractions, no unused fallbacks
-- Web search is best-effort: any failure returns `[]`, chat continues normally
-- Summary generation is best-effort: failure leaves `summary = null`, UI shows "generating…"
-
----
-
-## Implemented Features
-
-- [x] Knowledge base CRUD
-- [x] File upload: PDF + TXT, chunked and indexed into ChromaDB
-- [x] RAG Q&A: semantic search + Gemini answer generation
-- [x] SSE streaming responses with blinking cursor
-- [x] Source citation: shown only when `[SOURCE_USED]` detected
-- [x] Multi-turn conversation memory (last 5 turns injected into prompt)
-- [x] Chat history: persisted to SQLite, clearable
-- [x] Tool Use — Web search: triggers when RAG relevance insufficient (DuckDuckGo, no API key)
-- [x] Tool Use — Real-time weather: wttr.in JSON API for weather queries (temp, humidity, wind, UV)
-- [x] Tool Use — Document summary: auto-generated in background after upload
-- [x] Smart message classification: conversational / meta / followup / question routing
-- [x] Multilingual: responds in user's language; language-switch instructions handled correctly
-- [x] Typed sources UI: 📄 Document vs 🌐 Web Search with distinct styling
-- [x] File summary panel: click file chip name to expand summary
-- [x] Docker Compose: one-command deployment, nginx SSE proxy, named volume persistence
-- [x] JWT authentication: register/login, bcrypt passwords, 7-day tokens, per-user KB isolation
+- Axios for all REST calls; raw `fetch()` for SSE (Axios doesn't support streaming)
+- `sendMessageStream(kbId, message, onChunk, onSources, onDone, onStatus)`
 
 ---
 
@@ -281,24 +312,16 @@ Streaming:
 | `frontend/Dockerfile` | Multi-stage: node:20-alpine builds → nginx:alpine serves |
 | `frontend/nginx.conf` | Serves SPA, proxies `/api/` to `http://backend:8000` |
 
-**Critical nginx setting:** `proxy_buffering off` on the `/api/` block — without this,
-nginx buffers SSE chunks and streaming appears frozen in the browser.
+**Critical nginx settings:** `proxy_buffering off` and `X-Accel-Buffering no` on the `/api/` block — required for SSE streaming to work through nginx.
 
-**Data persistence:** named volume `smartdesk_data` mounted at `/app/data` in the
-backend container. Both SQLite (`data/smartdesk.db`) and ChromaDB (`data/chroma_data/`)
-write here, so data survives container restarts.
+**Data persistence:** named volume `smartdesk_data` at `/app/data` — both SQLite and ChromaDB write here, survives container restarts.
 
-**GEMINI_API_KEY:** passed as environment variable in docker-compose from the root `.env`
-file (which is gitignored). Template at `.env.example`.
+---
 
 ## Environment
 
-Root `.env` (for Docker):
+Root `.env` (Docker) / `backend/.env` (local dev):
 ```
 GEMINI_API_KEY=your_key_here
-```
-
-`backend/.env` (for local dev, loaded by python-dotenv):
-```
-GEMINI_API_KEY=your_key_here
+SECRET_KEY=your_secret_key_here   # optional; defaults to dev placeholder, must change in prod
 ```
