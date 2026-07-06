@@ -1,5 +1,5 @@
 import chroma_client
-from config import TOP_K
+from config import TOP_K, RELEVANCE_THRESHOLD
 from llm.trace import span as _trace_span
 
 
@@ -36,9 +36,13 @@ class RetrieveTool:
         with _trace_span({"type": "tool_call", "tool": "retrieve", "query_len": len(query)}) as _out:
             results = chroma_client.query_documents(self.kb_id, query, n_results=TOP_K)
             evidence = [{"text": r["text"], "source": r["filename"]} for r in results]
+            top_distance = results[0]["distance"] if results else float("inf")
+            relevance_ok = top_distance < RELEVANCE_THRESHOLD
             _out["chunks_count"] = len(results)
-            _out["evidence_count"] = len(evidence)
+            _out["top_distance"] = top_distance
+            _out["relevance_ok"] = relevance_ok
         return {
             "chunks": [r["text"] for r in results],
             "evidence": evidence,
+            "relevance_ok": relevance_ok,
         }

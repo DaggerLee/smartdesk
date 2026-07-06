@@ -62,7 +62,8 @@ def test_two_tool_calls_then_final(loop_seq, mock_tools):
         _tool("web_search", query="q"),
         _text("Final answer."),
     ])
-    events = _run()
+    with patch("agent.loop._check_groundedness", return_value={"supported": True, "unsupported_sentences": []}):
+        events = _run()
     assert [e.type for e in events] == [
         "tool_call", "tool_result",
         "tool_call", "tool_result",
@@ -87,10 +88,18 @@ def test_max_turns_forces_wrap_up(loop_seq, mock_tools):
     assert events[-1].data["text"] == "Wrap-up answer."
 
 
-def test_unknown_tool_raises_key_error(loop_seq, mock_tools):
-    """An unregistered tool name raises KeyError immediately."""
+def test_unknown_tool_yields_failed_event(loop_seq, mock_tools):
+    """An unregistered tool name yields a failed tool_result event (W2 self-healing)."""
     loop_seq([
         LLMResponse(text=None, tool_calls=[ToolCall("nonexistent", {})], raw={}),
+        LLMResponse(text="Fallback answer.", tool_calls=[], raw={}),
     ])
-    with pytest.raises(KeyError, match="nonexistent"):
-        _run()
+    with patch("agent.loop._check_groundedness", return_value={"supported": True, "unsupported_sentences": []}):
+        events = _run()
+
+    tool_results = [e for e in events if e.type == "tool_result"]
+    assert len(tool_results) == 1
+    assert tool_results[0].data["failed"] is True
+    assert "nonexistent" in tool_results[0].data["name"]
+    finals = [e for e in events if e.type == "final"]
+    assert len(finals) == 1
