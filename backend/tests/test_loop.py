@@ -6,7 +6,7 @@ on the loop — we must patch `agent.loop.complete` instead.
 
 Tool backends are patched at the module-level name they're bound to:
   - chroma_client.query_documents  (accessed via module ref in retrieve.py)
-  - agent.tools.web_search._ddgs_search  (bound locally in web_search.py)
+  - agent.tools.web_search.WebSearchTool.run  (patched to avoid real network calls)
 """
 
 from unittest.mock import MagicMock, patch
@@ -49,7 +49,7 @@ def loop_seq():
 def mock_tools():
     """Stub tool backends so no network or DB calls are made."""
     with patch("chroma_client.query_documents", return_value=[]), \
-         patch("agent.tools.web_search._ddgs_search", return_value=[]):
+         patch("agent.tools.web_search.WebSearchTool.run", return_value={"results": [], "evidence": []}):
         yield
 
 
