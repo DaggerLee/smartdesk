@@ -108,5 +108,61 @@ SSE Stream → [SOURCE_USED] / [WEB_USED] markers → Source Cards
 | POST | /api/chat/stream | RAG chat (streaming SSE) |
 | GET | /api/chat/history/{kb_id} | Get conversation history |
 
+## MCP Server
+
+SmartDesk exposes its tool layer as an MCP server (`backend/mcp_server/server.py`) using FastMCP, so any MCP-compatible client (Claude Desktop, Claude Code, custom agents) can call **retrieve** and **web_search** directly.
+
+### Tools
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `retrieve` | `kb_id: int`, `query: str` | Semantic search over a SmartDesk knowledge base (ChromaDB). Returns `chunks`, `evidence`, and `relevance_ok`. |
+| `web_search` | `query: str`, `num_results: int = 5` | DuckDuckGo search. Returns `results` and `evidence`. |
+
+Both tools follow the SmartDesk **evidence protocol**: every result includes an `evidence` list of `{"text": str, "source": str}` for citation and groundedness checking.
+
+### Registering in Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "smartdesk": {
+      "command": "python3",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/absolute/path/to/smartdesk/backend"
+    }
+  }
+}
+```
+
+### Registering in Claude Code
+
+Add to `.claude/settings.json` in your workspace:
+
+```json
+{
+  "mcpServers": {
+    "smartdesk": {
+      "command": "python3",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/absolute/path/to/smartdesk/backend",
+      "type": "stdio"
+    }
+  }
+}
+```
+
+### Running standalone
+
+```bash
+cd backend
+pip install -r requirements.txt   # includes fastmcp>=3.0
+python3 -m mcp_server.server      # stdio server, ready for any MCP client
+```
+
+---
+
 ## Background
 Built to demonstrate production-grade RAG architecture for enterprise knowledge management, inspired by real-world AI assistant integration work during internships at Google Maps and Shanghai Intelligent Transportation.
