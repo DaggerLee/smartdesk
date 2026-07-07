@@ -7,6 +7,7 @@ gemini_client.py is kept as-is for the existing v1 routes.
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
@@ -99,8 +100,16 @@ def complete(
         "has_system": bool(system),
     }
     with _trace_span(_entry) as _out:
-        resp = requests.post(url, json=body, timeout=30)
-        resp.raise_for_status()
+        _delay = 30
+        for _attempt in range(6):
+            resp = requests.post(url, json=body, timeout=30)
+            if resp.status_code == 429 and _attempt < 5:
+                logger.warning(f"[llm] 429 rate-limit, retrying in {_delay}s (attempt {_attempt+1}/5)")
+                time.sleep(_delay)
+                _delay = min(_delay * 2, 120)
+                continue
+            resp.raise_for_status()
+            break
         data = resp.json()
 
         parts = data["candidates"][0]["content"].get("parts", [])
