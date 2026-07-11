@@ -36,6 +36,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -49,6 +50,16 @@ os.chdir(_BACKEND)
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# Eval traffic isolation: use the dedicated eval API key when present, so eval
+# runs don't consume the dev key's daily quota. Must run before importing
+# config (which reads GEMINI_API_KEY at import time).
+_eval_key = os.getenv("GEMINI_API_KEY_EVAL")
+if _eval_key:
+    os.environ["GEMINI_API_KEY"] = _eval_key
+    print("[run_eval] Using GEMINI_API_KEY_EVAL for this run")
+else:
+    print("[run_eval] GEMINI_API_KEY_EVAL not set — falling back to GEMINI_API_KEY")
 
 from agent.groundedness import check as _groundedness_check
 from agent.loop import run_agent
@@ -385,6 +396,38 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     print(sep)
 
 
+# ── Run history archive ────────────────────────────────────────────────────────
+
+HISTORY_PATH = Path(__file__).parent / "results" / "history.jsonl"
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def append_history(agg: dict, n_items: int, limit: Optional[int]) -> None:
+    """Append one aggregate record per eval run — the before/after comparison
+    data source (Decisions §3: archive every run, keep the file in git)."""
+    record = {
+        "run_at": datetime.now().isoformat(timespec="seconds"),
+        "git_commit": _git_commit(),
+        "gold_set_items": n_items,
+        "limit": limit,
+        "eval_key_used": bool(_eval_key),
+        **agg,
+    }
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(HISTORY_PATH, "a") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(f"Run archived → {HISTORY_PATH}")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -419,7 +462,10 @@ def main() -> None:
     with open(out_path, "w") as f:
         for r in results:
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
-    print(f"\nDetailed results → {out_path}\n")
+    print(f"\nDetailed results → {out_path}")
+
+    append_history(agg, n_items=len(items), limit=args.limit)
+    print()
 
 
 if __name__ == "__main__":
