@@ -404,6 +404,34 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
 # ── Run history archive ────────────────────────────────────────────────────────
 
 HISTORY_PATH = Path(__file__).parent / "results" / "history.jsonl"
+LOCK_PATH = HISTORY_PATH.parent / ".lock"
+
+
+def _acquire_lock() -> None:
+    """Refuse to start while another eval run is alive.
+
+    The lock file holds the owning PID. Two concurrent runs hammer the same
+    API quota and poison each other's results, so this is enforced by code
+    rather than by remembering to kill old processes. A lock left behind by
+    a dead process is treated as stale and taken over.
+    """
+    if LOCK_PATH.exists():
+        try:
+            other_pid = int(LOCK_PATH.read_text().strip())
+        except ValueError:
+            other_pid = None
+        if other_pid is not None:
+            try:
+                os.kill(other_pid, 0)
+            except ProcessLookupError:
+                print(f"[run_eval] Stale lock from dead PID {other_pid} — taking over", flush=True)
+            else:
+                sys.exit(
+                    f"[run_eval] Another eval run is active (PID {other_pid}). "
+                    f"Refusing to start. If that's wrong, remove {LOCK_PATH}."
+                )
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOCK_PATH.write_text(str(os.getpid()))
 
 
 def _git_commit() -> str:
@@ -446,6 +474,14 @@ def main() -> None:
                              "in partial_<run_id>.jsonl are skipped on restart.")
     args = parser.parse_args()
 
+    _acquire_lock()
+    try:
+        _run(args)
+    finally:
+        LOCK_PATH.unlink(missing_ok=True)
+
+
+def _run(args: argparse.Namespace) -> None:
     items = _load_gold(args.limit)
     print(f"Evaluating {len(items)} items …", flush=True)
 
@@ -458,6 +494,8 @@ def main() -> None:
         with open(partial_path) as f:
             for line in f:
                 rec = json.loads(line)
+                if rec.get("error"):
+                    continue  # errored items are re-run, not treated as done
                 done[rec["id"]] = ItemResult(**rec)
         print(f"[run_eval] Resuming run {run_id}: {len(done)} item(s) already done", flush=True)
     partial_path.parent.mkdir(parents=True, exist_ok=True)
