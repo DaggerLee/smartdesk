@@ -149,6 +149,12 @@ def run_agent(
                 ],
             })
 
+            # Gemini expects ONE user message whose parts contain a
+            # functionResponse for EVERY functionCall in the model turn.
+            # Collect all parts here and append once after the loop —
+            # appending per-call would produce consecutive user messages.
+            fr_parts: list[dict] = []
+
             for tc in resp.tool_calls:
                 yield AgentEvent(type="tool_call", data={"name": tc.name, "args": tc.args})
 
@@ -163,7 +169,7 @@ def run_agent(
                         "fail_count": _tool_fail_counts[tc.name],
                         "unavailable": _tool_fail_counts[tc.name] >= _MAX_TOOL_FAILURES,
                     })
-                    _append_tool_error(state, tc.name, {"error": err_msg}, _tool_fail_counts)
+                    fr_parts.extend(_error_parts(tc.name, {"error": err_msg}, _tool_fail_counts))
                     yield AgentEvent(
                         type="tool_result",
                         data={"name": tc.name, "result_summary": "[ERROR] unknown tool", "failed": True},
@@ -182,7 +188,7 @@ def run_agent(
                         "fail_count": _tool_fail_counts[tc.name],
                         "unavailable": _tool_fail_counts[tc.name] >= _MAX_TOOL_FAILURES,
                     })
-                    _append_tool_error(state, tc.name, {"error": str(exc)}, _tool_fail_counts)
+                    fr_parts.extend(_error_parts(tc.name, {"error": str(exc)}, _tool_fail_counts))
                     yield AgentEvent(
                         type="tool_result",
                         data={"name": tc.name, "result_summary": f"[ERROR] {exc}", "failed": True},
@@ -191,10 +197,7 @@ def run_agent(
 
                 state.evidence.extend(result.get("evidence", []))
 
-                # Build the functionResponse; append rewrite hint if relevance is low.
-                fr_parts: list[dict] = [
-                    {"functionResponse": {"name": tc.name, "response": result}}
-                ]
+                fr_parts.append({"functionResponse": {"name": tc.name, "response": result}})
 
                 # Mechanism 2: low retrieval relevance → inject rewrite hint (capped)
                 if tc.name == "retrieve" and not result.get("relevance_ok", True):
@@ -207,13 +210,12 @@ def run_agent(
                             "rewrite_count": _rewrite_count,
                         })
 
-                state.messages.append({"role": "user", "parts": fr_parts})
-
                 yield AgentEvent(
                     type="tool_result",
                     data={"name": tc.name, "result_summary": _summarize(result)},
                 )
 
+            state.messages.append({"role": "user", "parts": fr_parts})
             state.turn += 1
             continue
 
@@ -279,13 +281,12 @@ def run_agent(
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _append_tool_error(
-    state: AgentState,
+def _error_parts(
     tool_name: str,
     error_payload: dict,
     fail_counts: dict[str, int],
-) -> None:
-    """Append an error functionResponse; inject unavailability notice when threshold is hit."""
+) -> list[dict]:
+    """Build error functionResponse parts; inject unavailability notice when threshold is hit."""
     parts: list[dict] = [{"functionResponse": {"name": tool_name, "response": error_payload}}]
     if fail_counts.get(tool_name, 0) >= _MAX_TOOL_FAILURES:
         parts.append({
@@ -293,7 +294,7 @@ def _append_tool_error(
                 name=tool_name, count=fail_counts[tool_name]
             )
         })
-    state.messages.append({"role": "user", "parts": parts})
+    return parts
 
 
 def _summarize(result: dict, max_chars: int = 200) -> str:
