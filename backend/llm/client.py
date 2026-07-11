@@ -20,8 +20,6 @@ from llm.trace import span as _trace_span, write as _trace_write
 
 logger = logging.getLogger(__name__)
 
-_cached_model: Optional[str] = None
-
 
 # ── Response types ─────────────────────────────────────────────────────────────
 
@@ -66,12 +64,22 @@ def _raise_for_status(resp: requests.Response) -> None:
         raise requests.HTTPError(_redact(str(exc)), response=resp) from None
 
 
-# ── Model discovery ───────────────────────────────────────────────────────────
+# ── Model validation ──────────────────────────────────────────────────────────
+
+_model_validated = False
+
 
 def _find_model() -> str:
-    global _cached_model
-    if _cached_model:
-        return _cached_model
+    """Return config.GEMINI_MODEL, validating its availability once per process.
+
+    The model name is single-sourced in config — this function never
+    auto-picks. It only confirms the configured model exists for this API key
+    and supports generateContent, so traces and eval archives always record
+    exactly the model that was called.
+    """
+    global _model_validated
+    if _model_validated:
+        return config.GEMINI_MODEL
 
     try:
         resp = requests.get(
@@ -83,14 +91,23 @@ def _find_model() -> str:
     if resp.status_code != 200:
         raise RuntimeError(f"ListModels failed ({resp.status_code}): {_redact(resp.text)}")
 
-    models = resp.json().get("models", [])
-    for m in models:
-        if "generateContent" in m.get("supportedGenerationMethods", []):
-            _cached_model = m["name"]
-            logger.info(f"[llm] Selected model: {_cached_model}")
-            return _cached_model
-
-    raise RuntimeError("No model supporting generateContent found.")
+    methods_by_name = {
+        m["name"]: m.get("supportedGenerationMethods", [])
+        for m in resp.json().get("models", [])
+    }
+    methods = methods_by_name.get(config.GEMINI_MODEL)
+    if methods is None:
+        raise RuntimeError(
+            f"Configured model {config.GEMINI_MODEL!r} not available for this "
+            f"API key. Available: {sorted(methods_by_name)}"
+        )
+    if "generateContent" not in methods:
+        raise RuntimeError(
+            f"Configured model {config.GEMINI_MODEL!r} does not support generateContent."
+        )
+    logger.info(f"[llm] Validated model: {config.GEMINI_MODEL}")
+    _model_validated = True
+    return config.GEMINI_MODEL
 
 
 # ── Global rate limiter ───────────────────────────────────────────────────────
@@ -116,6 +133,28 @@ def _throttle() -> None:
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
+
+def model_turn(resp: LLMResponse) -> dict:
+    """Build the model-role history message for a tool-call response.
+
+    Echoes the raw candidate content verbatim when available: thinking models
+    (gemini-3.5+) attach a thoughtSignature to functionCall parts and reject
+    replayed history that drops it, so the model turn must not be
+    reconstructed from parsed tool calls. The reconstruction below is only a
+    fallback for tests that use synthetic responses (raw={}).
+    """
+    try:
+        content = resp.raw["candidates"][0]["content"]
+        return {"role": content.get("role", "model"), "parts": content["parts"]}
+    except (KeyError, IndexError, TypeError):
+        return {
+            "role": "model",
+            "parts": [
+                {"functionCall": {"name": tc.name, "args": tc.args}}
+                for tc in resp.tool_calls
+            ],
+        }
+
 
 def complete(
     messages: list[dict],
@@ -159,8 +198,8 @@ def complete(
         for _attempt in range(6):
             _throttle()
             resp = _post(url, json=body, timeout=30)
-            if resp.status_code == 429 and _attempt < 5:
-                logger.warning(f"[llm] 429 rate-limit, retrying in {_delay}s (attempt {_attempt+1}/5)")
+            if resp.status_code in (429, 500, 503, 504) and _attempt < 5:
+                logger.warning(f"[llm] {resp.status_code} transient, retrying in {_delay}s (attempt {_attempt+1}/5)")
                 time.sleep(_delay)
                 _delay = min(_delay * 2, 120)
                 continue

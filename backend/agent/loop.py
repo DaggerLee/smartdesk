@@ -28,7 +28,7 @@ from agent.state import AgentState
 from agent.tools.retrieve import RetrieveTool
 from agent.tools.web_search import WebSearchTool
 from config import MAX_AGENT_TURNS
-from llm.client import complete
+from llm.client import complete, model_turn
 from llm.trace import span as _trace_span, write as _trace_write
 
 
@@ -140,14 +140,9 @@ def run_agent(
         # ── Branch A: model requested tool calls ───────────────────────────────
         if resp.tool_calls:
 
-            # Echo the model turn (all functionCall parts together) before results.
-            state.messages.append({
-                "role": "model",
-                "parts": [
-                    {"functionCall": {"name": tc.name, "args": tc.args}}
-                    for tc in resp.tool_calls
-                ],
-            })
+            # Echo the model turn verbatim (raw parts keep the thoughtSignature
+            # that gemini-3.5+ requires on replayed functionCall history).
+            state.messages.append(model_turn(resp))
 
             # Gemini expects ONE user message whose parts contain a
             # functionResponse for EVERY functionCall in the model turn.

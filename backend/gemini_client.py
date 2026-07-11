@@ -1,39 +1,44 @@
 import json
 import logging
 import os
-from typing import Generator, List, Optional
+from typing import Generator, List
 
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
+import config
+
 _API_KEY = os.getenv("GEMINI_API_KEY", "")
 _BASE = "https://generativelanguage.googleapis.com/v1beta"
-_cached_model: Optional[str] = None
+_model_validated = False
 
 
 def _find_model() -> str:
-    """Query available models for this API key and return the first one that supports generateContent."""
-    global _cached_model
-    if _cached_model:
-        return _cached_model
+    """Return config.GEMINI_MODEL, validating its availability once per process.
+
+    The model name is single-sourced in config — this function never
+    auto-picks a model from the ListModels order.
+    """
+    global _model_validated
+    if _model_validated:
+        return config.GEMINI_MODEL
 
     resp = requests.get(f"{_BASE}/models?key={_API_KEY}", timeout=15)
     if resp.status_code != 200:
         raise RuntimeError(f"ListModels failed ({resp.status_code}): {resp.text}")
 
-    models = resp.json().get("models", [])
-    names = [m["name"] for m in models]
-    logging.info(f"[Gemini] Available models: {names}")
-
-    for m in models:
-        if "generateContent" in m.get("supportedGenerationMethods", []):
-            _cached_model = m["name"]
-            logging.info(f"[Gemini] Selected model: {_cached_model}")
-            return _cached_model
-
-    raise RuntimeError(f"No model supporting generateContent found. Available: {names}")
+    names = [m["name"] for m in resp.json().get("models", [])
+             if "generateContent" in m.get("supportedGenerationMethods", [])]
+    if config.GEMINI_MODEL not in names:
+        raise RuntimeError(
+            f"Configured model {config.GEMINI_MODEL!r} not available for this "
+            f"API key. Available: {names}"
+        )
+    logging.info(f"[Gemini] Validated model: {config.GEMINI_MODEL}")
+    _model_validated = True
+    return config.GEMINI_MODEL
 
 
 def _build_prompt(

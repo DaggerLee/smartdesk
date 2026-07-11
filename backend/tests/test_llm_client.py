@@ -34,7 +34,7 @@ def test_redact_masks_key_param():
 
 
 def test_complete_http_error_has_no_key(monkeypatch):
-    monkeypatch.setattr(client, "_cached_model", "models/test-model")
+    monkeypatch.setattr(client, "_model_validated", True)
     monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
     fake = _fake_response(
         403,
@@ -48,8 +48,32 @@ def test_complete_http_error_has_no_key(monkeypatch):
     assert "key=***" in str(ei.value)
 
 
+def test_model_turn_preserves_thought_signature():
+    raw = {"candidates": [{"content": {"role": "model", "parts": [
+        {"functionCall": {"name": "retrieve", "args": {"query": "q"}},
+         "thoughtSignature": "sig123"},
+    ]}}]}
+    resp = client.LLMResponse(
+        text=None, tool_calls=[client.ToolCall("retrieve", {"query": "q"})], raw=raw,
+    )
+    turn = client.model_turn(resp)
+    assert turn["role"] == "model"
+    assert turn["parts"][0]["thoughtSignature"] == "sig123"
+
+
+def test_model_turn_falls_back_to_reconstruction():
+    resp = client.LLMResponse(
+        text=None, tool_calls=[client.ToolCall("retrieve", {"query": "q"})], raw={},
+    )
+    turn = client.model_turn(resp)
+    assert turn == {
+        "role": "model",
+        "parts": [{"functionCall": {"name": "retrieve", "args": {"query": "q"}}}],
+    }
+
+
 def test_complete_connection_error_has_no_key(monkeypatch):
-    monkeypatch.setattr(client, "_cached_model", "models/test-model")
+    monkeypatch.setattr(client, "_model_validated", True)
     monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
     err = requests.ConnectionError(
         "Failed to establish a new connection to "

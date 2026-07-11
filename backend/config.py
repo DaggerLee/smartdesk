@@ -12,6 +12,9 @@ MAX_AGENT_TURNS: int = 5
 # ── LLM / Gemini ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
+# Single source of truth for the model. Exact name (no -latest alias); clients
+# validate availability at first call but never auto-pick a different model.
+GEMINI_MODEL: str = "models/gemini-3.5-flash"
 
 # ── Tracing ───────────────────────────────────────────────────────────────────
 TRACE_LOG_PATH: str = os.getenv("TRACE_LOG_PATH", "logs/traces/traces.jsonl")

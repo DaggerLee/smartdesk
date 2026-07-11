@@ -66,6 +66,7 @@ else:
 os.environ.setdefault("LLM_MIN_INTERVAL_S", "6")
 print(f"[run_eval] LLM_MIN_INTERVAL_S={os.environ['LLM_MIN_INTERVAL_S']}")
 
+import config
 from agent.groundedness import check as _groundedness_check
 from agent.loop import run_agent
 from agent.router import route as _router_route
@@ -450,6 +451,7 @@ def append_history(agg: dict, n_items: int, limit: Optional[int]) -> None:
     record = {
         "run_at": datetime.now().isoformat(timespec="seconds"),
         "git_commit": _git_commit(),
+        "model": config.GEMINI_MODEL,
         "gold_set_items": n_items,
         "limit": limit,
         "eval_key_used": bool(_eval_key),
