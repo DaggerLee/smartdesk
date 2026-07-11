@@ -8,6 +8,7 @@ gemini_client.py is kept as-is for the existing v1 routes.
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
@@ -37,6 +38,34 @@ class LLMResponse:
     raw: dict                  # full API response, used by trace logger
 
 
+# ── Secret hygiene ────────────────────────────────────────────────────────────
+
+def _redact(text: str) -> str:
+    """Mask the API key query param so exception text never leaks secrets.
+
+    requests puts the full URL (including ?key=…) into every HTTPError and
+    connection-error message; those strings end up in eval result files and
+    pasted logs, so they must be scrubbed at the raise site.
+    """
+    return re.sub(r"key=[^&\s\"']+", "key=***", text)
+
+
+def _post(url: str, **kwargs) -> requests.Response:
+    """requests.post with key-redacted exception messages."""
+    try:
+        return requests.post(url, **kwargs)
+    except requests.RequestException as exc:
+        raise type(exc)(_redact(str(exc))) from None
+
+
+def _raise_for_status(resp: requests.Response) -> None:
+    """resp.raise_for_status() with a key-redacted error message."""
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        raise requests.HTTPError(_redact(str(exc)), response=resp) from None
+
+
 # ── Model discovery ───────────────────────────────────────────────────────────
 
 def _find_model() -> str:
@@ -44,12 +73,15 @@ def _find_model() -> str:
     if _cached_model:
         return _cached_model
 
-    resp = requests.get(
-        f"{config.GEMINI_BASE_URL}/models?key={config.GEMINI_API_KEY}",
-        timeout=15,
-    )
+    try:
+        resp = requests.get(
+            f"{config.GEMINI_BASE_URL}/models?key={config.GEMINI_API_KEY}",
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"ListModels request failed: {_redact(str(exc))}") from None
     if resp.status_code != 200:
-        raise RuntimeError(f"ListModels failed ({resp.status_code}): {resp.text}")
+        raise RuntimeError(f"ListModels failed ({resp.status_code}): {_redact(resp.text)}")
 
     models = resp.json().get("models", [])
     for m in models:
@@ -126,13 +158,13 @@ def complete(
         _delay = 30
         for _attempt in range(6):
             _throttle()
-            resp = requests.post(url, json=body, timeout=30)
+            resp = _post(url, json=body, timeout=30)
             if resp.status_code == 429 and _attempt < 5:
                 logger.warning(f"[llm] 429 rate-limit, retrying in {_delay}s (attempt {_attempt+1}/5)")
                 time.sleep(_delay)
                 _delay = min(_delay * 2, 120)
                 continue
-            resp.raise_for_status()
+            _raise_for_status(resp)
             break
         data = resp.json()
 
@@ -172,13 +204,13 @@ def stream(messages: list[dict], system: str | None = None) -> Iterator[str]:
         body["systemInstruction"] = {"parts": [{"text": system}]}
 
     chunks: list[str] = []
-    with requests.post(
+    with _post(
         url,
         json=body,
         stream=True,
         timeout=60,
     ) as resp:
-        resp.raise_for_status()
+        _raise_for_status(resp)
         for raw_line in resp.iter_lines():
             if not raw_line:
                 continue
