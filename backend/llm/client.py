@@ -7,6 +7,7 @@ gemini_client.py is kept as-is for the existing v1 routes.
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
@@ -60,6 +61,28 @@ def _find_model() -> str:
     raise RuntimeError("No model supporting generateContent found.")
 
 
+# ── Global rate limiter ───────────────────────────────────────────────────────
+
+_last_call_ts = 0.0
+
+
+def _throttle() -> None:
+    """Enforce a minimum interval between LLM requests, across ALL callers.
+
+    Controlled by LLM_MIN_INTERVAL_S (default 0 = disabled). Eval runs set it
+    to ~6 so router/judge/generate/groundedness calls can't burst past the
+    free-tier RPM limit; production paths leave it unset and are unaffected.
+    """
+    global _last_call_ts
+    min_interval = float(os.getenv("LLM_MIN_INTERVAL_S", "0"))
+    if min_interval <= 0:
+        return
+    wait = _last_call_ts + min_interval - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_call_ts = time.monotonic()
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 def complete(
@@ -102,6 +125,7 @@ def complete(
     with _trace_span(_entry) as _out:
         _delay = 30
         for _attempt in range(6):
+            _throttle()
             resp = requests.post(url, json=body, timeout=30)
             if resp.status_code == 429 and _attempt < 5:
                 logger.warning(f"[llm] 429 rate-limit, retrying in {_delay}s (attempt {_attempt+1}/5)")

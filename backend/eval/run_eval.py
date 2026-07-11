@@ -61,6 +61,11 @@ if _eval_key:
 else:
     print("[run_eval] GEMINI_API_KEY_EVAL not set — falling back to GEMINI_API_KEY")
 
+# Throttle every LLM call (router/judge/generate/groundedness) to stay under
+# the free-tier RPM limit; see llm/client._throttle. Overridable from the shell.
+os.environ.setdefault("LLM_MIN_INTERVAL_S", "6")
+print(f"[run_eval] LLM_MIN_INTERVAL_S={os.environ['LLM_MIN_INTERVAL_S']}")
+
 from agent.groundedness import check as _groundedness_check
 from agent.loop import run_agent
 from agent.router import route as _router_route
@@ -436,23 +441,45 @@ def main() -> None:
                         help="Evaluate only first N items (smoke test)")
     parser.add_argument("--out", default=str(DEFAULT_OUT),
                         help="Output JSONL path for detailed per-item results")
+    parser.add_argument("--run-id", default=None,
+                        help="Resume ID; defaults to <date>_<commit>. Items already "
+                             "in partial_<run_id>.jsonl are skipped on restart.")
     args = parser.parse_args()
 
     items = _load_gold(args.limit)
     print(f"Evaluating {len(items)} items …", flush=True)
 
+    # Checkpoint file: one line per completed item, written immediately, so a
+    # mid-run crash never throws away finished work.
+    run_id = args.run_id or f"{datetime.now():%Y%m%d}_{_git_commit()}"
+    partial_path = HISTORY_PATH.parent / f"partial_{run_id}.jsonl"
+    done: dict[str, ItemResult] = {}
+    if partial_path.exists():
+        with open(partial_path) as f:
+            for line in f:
+                rec = json.loads(line)
+                done[rec["id"]] = ItemResult(**rec)
+        print(f"[run_eval] Resuming run {run_id}: {len(done)} item(s) already done", flush=True)
+    partial_path.parent.mkdir(parents=True, exist_ok=True)
+
     results: list[ItemResult] = []
     for i, item in enumerate(items, 1):
+        if item["id"] in done:
+            results.append(done[item["id"]])
+            print(f"  [{i:>2}/{len(items)}] {item['id']:<6} ({item['category']}) … skipped (resumed)",
+                  flush=True)
+            continue
         print(f"  [{i:>2}/{len(items)}] {item['id']:<6} ({item['category']}) … ",
               end="", flush=True)
         r = eval_item(item)
         results.append(r)
+        with open(partial_path, "a") as pf:
+            pf.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
         if r.error:
             print(f"ERR  {r.latency_s:.1f}s  {r.error[:60]}", flush=True)
         else:
             status = "✓" if (r.route_correct and r.contains_pass) else "~"
             print(f"{status}    {r.latency_s:.1f}s", flush=True)
-        time.sleep(20)  # 20 s pause keeps us under Gemini free-tier RPM limit
 
     agg = aggregate(results)
     print_report(agg, results)
