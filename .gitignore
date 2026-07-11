@@ -23,3 +23,7 @@ CLAUDE.local.md
 
 # Local job-search working docs (not for the public repo; docs/ reserved for public docs)
 docs-local/
+
+# Trace logs and local Claude Code config
+backend/logs/
+.claude/settings.local.json
