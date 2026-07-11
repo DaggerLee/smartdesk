@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **RULE — read first:** Before implementing any feature, read `docs/SmartDesk_Decisions.md`. It is the single source of truth for current conclusions; when it conflicts with any other document, it wins.
+> **RULE — read first:** Before implementing any feature, read `docs-local/SmartDesk_Decisions.md`. It is the single source of truth for current conclusions; when it conflicts with any other document, it wins.
 >
-> **RULE — docs/notes/ is an archive:** `docs/notes/` is a learning archive layer. Only read files there when a Decisions entry's source pointer references them or the user explicitly asks.
+> **RULE — docs-local/notes/ is an archive:** `docs-local/notes/` is a learning archive layer. Only read files there when a Decisions entry's source pointer references them or the user explicitly asks.
 
 # SmartDesk — Enterprise Knowledge Assistant (v2 refactor in progress)
 

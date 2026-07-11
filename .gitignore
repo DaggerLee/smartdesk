@@ -21,7 +21,5 @@ venv/
 backend/data/
 CLAUDE.local.md
 
-# Local job-search working docs (not for the public repo)
-docs/SmartDesk_Decisions.md
-docs/HITL_Write_Tool_Design.md
-docs/notes/
+# Local job-search working docs (not for the public repo; docs/ reserved for public docs)
+docs-local/
