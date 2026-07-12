@@ -495,14 +495,18 @@ def _git_commit() -> str:
 
 
 def _git_dirty() -> bool:
-    """True if the working tree has uncommitted changes (staged or not).
+    """True if tracked files have uncommitted changes (staged or not).
 
     An eval archived against a dirty tree records a git_commit that doesn't
     match the code that actually ran — see the 20260712_fixw4 incident.
+    Untracked files are deliberately excluded: eval/results/ accumulates
+    scratch artifacts (partial_*.jsonl checkpoints, run logs) that are
+    conventionally left untracked between runs, and their presence says
+    nothing about whether the code matches HEAD.
     """
     try:
         out = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "--untracked-files=no"],
             capture_output=True, text=True, timeout=5, check=True,
         ).stdout
         return bool(out.strip())
