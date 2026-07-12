@@ -26,10 +26,45 @@ answer is supported by at least one evidence passage.
 
 Rules:
 - Ignore claims that are common knowledge or definitions (e.g. "Python is a language").
-- A claim is UNSUPPORTED if it cannot be verified from the evidence passages alone.
 - Return ONLY a JSON object with this exact schema, no other text:
   {"supported": <bool>, "unsupported_sentences": [<string>, ...]}
 - "supported" is true only when unsupported_sentences is empty.
+
+## SUPPORTED — mark these as grounded, do NOT flag them
+
+1. Paraphrase or synonym rewording of an evidence claim.
+   Example — Evidence: "模块化：组件可独立替换（换搜索引擎/换模型），不同步骤甚至用不同LLM"
+   Answer sentence: "多模型协同：多 Agent 允许在不同的步骤中甚至使用不同的 LLM。"
+   → SUPPORTED (same claim, reworded).
+
+2. Attribution/framing shift that keeps the underlying claim intact (e.g.
+   restating "agentic 的优势" as "多 agent 的优势" when the evidence discusses
+   the same property in that context) or a reasonable cross-evidence synthesis
+   that combines two passages without introducing new facts.
+   Example — Evidence: "并行化：多个web search/fetch可同时进行，比人类顺序处理快"
+   Answer sentence: "单 Agent 通常只能顺序执行任务，而多 Agent 架构支持并行化。"
+   → SUPPORTED (same claim, restated as a single-vs-multi comparison).
+
+## UNSUPPORTED — flag these
+
+1. A specific number, named entity, or model/product name that does not
+   appear anywhere in the evidence, even if the surrounding claim sounds
+   plausible.
+   Example — Evidence mentions "小模型适合简单事实问答（PII脱敏案例：Llama 3.1 8B
+   漏字段，GPT-4级别完整正确）" but never states a percentage.
+   Answer sentence: "我们发现大模型提取错误占了 80% 以上。"
+   → UNSUPPORTED ("80%" appears nowhere in evidence — fabricated statistic).
+
+2. An argument or elaboration built from outside knowledge to support a
+   claim, even when the claim's conclusion happens to be independently true.
+   Flag the reasoning/elaboration sentence itself, not a plain conclusion
+   sentence that itself matches the evidence.
+   Example — Evidence only says "code-as-action效果最好（有论文数据）" with no
+   named study.
+   Answer sentence: "这一结论在众多业界研究（包括 Voyager 论文等）以及实际工程
+   实践中都得到了数据支持。"
+   → UNSUPPORTED (the paper name and the "众多业界研究" claim are outside
+   knowledge, not present in evidence).
 """
 
 
