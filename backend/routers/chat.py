@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 from typing import Generator, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +15,7 @@ from auth import get_current_user
 from database import SessionLocal, get_db
 from gemini_client import generate_answer_stream
 from llm.client import stream as llm_stream
+from llm.trace import context as _trace_context
 from models import Conversation, KnowledgeBase, User
 from tools import assess_rag_quality, fetch_weather, is_weather_query, web_search
 
@@ -112,7 +114,9 @@ def chat_stream(
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    path = route(body.message)
+    request_id = uuid.uuid4().hex[:12]
+    with _trace_context(request_id=request_id):
+        path = route(body.message)
     print(f"[Chat] Route: {path!r} — {body.message!r}")
 
     _sse_headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -120,44 +124,46 @@ def chat_stream(
     # ── direct: conversational reply, no retrieval ────────────────────────────
     if path == "direct":
         def generate_direct() -> Generator[str, None, None]:
-            msgs = [{"role": "user", "parts": [{"text": body.message}]}]
-            chunks: List[str] = []
-            for chunk in llm_stream(msgs):
-                chunks.append(chunk)
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-            conv = Conversation(kb_id=body.kb_id, question=body.message, answer="".join(chunks))
-            db.add(conv)
-            db.commit()
-            yield "data: [DONE]\n\n"
+            with _trace_context(request_id=request_id):
+                msgs = [{"role": "user", "parts": [{"text": body.message}]}]
+                chunks: List[str] = []
+                for chunk in llm_stream(msgs):
+                    chunks.append(chunk)
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                conv = Conversation(kb_id=body.kb_id, question=body.message, answer="".join(chunks))
+                db.add(conv)
+                db.commit()
+                yield "data: [DONE]\n\n"
         return StreamingResponse(generate_direct(), media_type="text/event-stream", headers=_sse_headers)
 
     # ── agent: multi-turn tool loop ───────────────────────────────────────────
     if path == "agent":
         def generate_agent() -> Generator[str, None, None]:
-            final_msgs: Optional[List[dict]] = None
-            for event in run_agent(body.message, body.kb_id):
-                if event.type == "tool_call":
-                    name = event.data["name"]
-                    label = "Searching knowledge base…" if name == "retrieve" else "Searching the web…"
-                    yield f"data: {json.dumps({'status': label}, ensure_ascii=False)}\n\n"
-                elif event.type == "final":
-                    final_msgs = event.data.get("messages")
+            with _trace_context(request_id=request_id):
+                final_msgs: Optional[List[dict]] = None
+                for event in run_agent(body.message, body.kb_id):
+                    if event.type == "tool_call":
+                        name = event.data["name"]
+                        label = "Searching knowledge base…" if name == "retrieve" else "Searching the web…"
+                        yield f"data: {json.dumps({'status': label}, ensure_ascii=False)}\n\n"
+                    elif event.type == "final":
+                        final_msgs = event.data.get("messages")
 
-            chunks: List[str] = []
-            if final_msgs:
-                for chunk in llm_stream(final_msgs, system=SYSTEM_PROMPT):
-                    chunks.append(chunk)
-                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                chunks: List[str] = []
+                if final_msgs:
+                    for chunk in llm_stream(final_msgs, system=SYSTEM_PROMPT):
+                        chunks.append(chunk)
+                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
-            _db = SessionLocal()
-            try:
-                _db.add(Conversation(
-                    kb_id=body.kb_id, question=body.message, answer="".join(chunks)
-                ))
-                _db.commit()
-            finally:
-                _db.close()
-            yield "data: [DONE]\n\n"
+                _db = SessionLocal()
+                try:
+                    _db.add(Conversation(
+                        kb_id=body.kb_id, question=body.message, answer="".join(chunks)
+                    ))
+                    _db.commit()
+                finally:
+                    _db.close()
+                yield "data: [DONE]\n\n"
         return StreamingResponse(generate_agent(), media_type="text/event-stream", headers=_sse_headers)
 
     # ── rag: v1 existing chain (unchanged) ───────────────────────────────────
@@ -232,37 +238,38 @@ def chat_stream(
             print(f"[Chat] External tools returned {len(web_results)} results")
 
     def generate() -> Generator[str, None, None]:
-        chunks: List[str] = []
-        for chunk in generate_answer_stream(
-            body.message, context_texts, history, web_results or None, msg_type
-        ):
-            chunks.append(chunk)
-            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        with _trace_context(request_id=request_id):
+            chunks: List[str] = []
+            for chunk in generate_answer_stream(
+                body.message, context_texts, history, web_results or None, msg_type
+            ):
+                chunks.append(chunk)
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
-        full_answer = "".join(chunks)
-        used_docs = "[SOURCE_USED]" in full_answer
-        used_web = "[WEB_USED]" in full_answer
-        clean_answer = full_answer.replace("[SOURCE_USED]", "").replace("[WEB_USED]", "").rstrip()
+            full_answer = "".join(chunks)
+            used_docs = "[SOURCE_USED]" in full_answer
+            used_web = "[WEB_USED]" in full_answer
+            clean_answer = full_answer.replace("[SOURCE_USED]", "").replace("[WEB_USED]", "").rstrip()
 
-        all_sources: List[dict] = []
-        if used_docs and doc_sources:
-            all_sources.extend(doc_sources)
-        if used_web and web_results:
-            for r in web_results:
-                all_sources.append({
-                    "type": "web",
-                    "title": r.get("title", "Web result"),
-                    "url": r.get("url", ""),
-                    "snippet": r.get("snippet", ""),
-                })
+            all_sources: List[dict] = []
+            if used_docs and doc_sources:
+                all_sources.extend(doc_sources)
+            if used_web and web_results:
+                for r in web_results:
+                    all_sources.append({
+                        "type": "web",
+                        "title": r.get("title", "Web result"),
+                        "url": r.get("url", ""),
+                        "snippet": r.get("snippet", ""),
+                    })
 
-        if all_sources:
-            yield f"data: {json.dumps({'sources': all_sources}, ensure_ascii=False)}\n\n"
+            if all_sources:
+                yield f"data: {json.dumps({'sources': all_sources}, ensure_ascii=False)}\n\n"
 
-        conv = Conversation(kb_id=body.kb_id, question=body.message, answer=clean_answer)
-        db.add(conv)
-        db.commit()
-        yield "data: [DONE]\n\n"
+            conv = Conversation(kb_id=body.kb_id, question=body.message, answer=clean_answer)
+            db.add(conv)
+            db.commit()
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers)
 
