@@ -197,7 +197,19 @@ def complete(
         _delay = 30
         for _attempt in range(6):
             _throttle()
-            resp = _post(url, json=body, timeout=30)
+            try:
+                resp = _post(url, json=body, timeout=30)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                # No HTTP response at all (never got a status code) — same
+                # transient-failure budget as a 429/503, since a flaky
+                # connection is no more the caller's fault than an overloaded
+                # server. _post() has already redacted the key in exc's message.
+                if _attempt < 5:
+                    logger.warning(f"[llm] {type(exc).__name__} transient, retrying in {_delay}s (attempt {_attempt+1}/5)")
+                    time.sleep(_delay)
+                    _delay = min(_delay * 2, 120)
+                    continue
+                raise
             if resp.status_code in (429, 500, 503, 504) and _attempt < 5:
                 logger.warning(f"[llm] {resp.status_code} transient, retrying in {_delay}s (attempt {_attempt+1}/5)")
                 time.sleep(_delay)
