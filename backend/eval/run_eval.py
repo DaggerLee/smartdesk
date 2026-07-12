@@ -494,7 +494,25 @@ def _git_commit() -> str:
         return "unknown"
 
 
-def append_history(agg: dict, n_items: int, limit: Optional[int]) -> None:
+def _git_dirty() -> bool:
+    """True if the working tree has uncommitted changes (staged or not).
+
+    An eval archived against a dirty tree records a git_commit that doesn't
+    match the code that actually ran — see the 20260712_fixw4 incident.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout
+        return bool(out.strip())
+    except Exception:
+        # Can't verify cleanliness (e.g. not a git repo) — treat as dirty
+        # rather than silently vouching for a state we couldn't check.
+        return True
+
+
+def append_history(agg: dict, n_items: int, limit: Optional[int], git_dirty: bool) -> None:
     """Append one aggregate record per eval run — the before/after comparison
     data source (Decisions §3: archive every run, keep the file in git)."""
     record = {
@@ -506,6 +524,8 @@ def append_history(agg: dict, n_items: int, limit: Optional[int]) -> None:
         "eval_key_used": bool(_eval_key),
         **agg,
     }
+    if git_dirty:
+        record["git_dirty"] = True
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(HISTORY_PATH, "a") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -523,16 +543,28 @@ def main() -> None:
     parser.add_argument("--run-id", default=None,
                         help="Resume ID; defaults to <date>_<commit>. Items already "
                              "in partial_<run_id>.jsonl are skipped on restart.")
+    parser.add_argument("--allow-dirty", action="store_true",
+                        help="Run even with uncommitted changes in the working tree. "
+                             "The archived history.jsonl record is forced to include "
+                             "\"git_dirty\": true so the mismatch is never silent.")
     args = parser.parse_args()
+
+    dirty = _git_dirty()
+    if dirty and not args.allow_dirty:
+        sys.exit(
+            "[run_eval] Working tree has uncommitted changes — refusing to run "
+            "(the archived record's git_commit would not match the code that "
+            "actually ran). Commit first, or pass --allow-dirty to override."
+        )
 
     _acquire_lock()
     try:
-        _run(args)
+        _run(args, git_dirty=dirty)
     finally:
         LOCK_PATH.unlink(missing_ok=True)
 
 
-def _run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace, git_dirty: bool) -> None:
     items = _load_gold(args.limit)
     print(f"Evaluating {len(items)} items …", flush=True)
 
@@ -580,7 +612,7 @@ def _run(args: argparse.Namespace) -> None:
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
     print(f"\nDetailed results → {out_path}")
 
-    append_history(agg, n_items=len(items), limit=args.limit)
+    append_history(agg, n_items=len(items), limit=args.limit, git_dirty=git_dirty)
     print()
 
 
