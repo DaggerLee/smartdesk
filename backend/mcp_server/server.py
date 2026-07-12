@@ -34,6 +34,11 @@ _BACKEND = Path(__file__).parent.parent.resolve()
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
+# chroma_client and the SQLite DB use relative paths anchored to backend/.
+# Set cwd here so the server works regardless of how it is invoked.
+import os
+os.chdir(_BACKEND)
+
 from fastmcp import FastMCP
 
 mcp = FastMCP(

@@ -3,12 +3,15 @@ from typing import List
 
 import chromadb
 from chromadb.config import Settings
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 import config
 
-# Uses ChromaDB's built-in ONNX embedding model — no PyTorch required
-_embedding_fn = DefaultEmbeddingFunction()
+# Multilingual model (was DefaultEmbeddingFunction, English-only ONNX model —
+# it embedded Chinese KB content poorly, see config.RELEVANCE_THRESHOLD comment).
+_embedding_fn = SentenceTransformerEmbeddingFunction(
+    model_name="paraphrase-multilingual-MiniLM-L12-v2"
+)
 
 # Local persistent ChromaDB with telemetry disabled
 _client = chromadb.PersistentClient(
