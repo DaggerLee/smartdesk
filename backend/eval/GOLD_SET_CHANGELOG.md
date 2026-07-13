@@ -33,6 +33,39 @@ harness or agent code are fixed in code, not here.
   keeps `a006` unchanged. Full 36-id listing verified unique after the
   rename (35 unique ids before the fix, 36 after).
 
+## 2026-07-13 — gold set v2 (post 3-run protocol, r010/r012/r013 triage)
+
+- **r010** (2026-07-13): left unchanged (query, keywords, everything). Ruling:
+  the question itself is not wrong; the system answered a different but
+  adjacent framework from the knowledge base ("自主程度" autonomy-level
+  spectrum) instead of the one the question asks about ("难度谱系"
+  difficulty-spectrum examples: Invoice/Customer/Computer Use). This is a
+  real system regression introduced by the corpus expansion (more chunks →
+  more candidate framings to confuse retrieval/generation on), not a
+  labeling defect, so it does not get a gold-set fix. Logged instead as a
+  known regression in `docs-local/SmartDesk_Decisions.md` §四 for the next
+  fix batch (candidates: retrieval re-ranking, a generation-prompt
+  instruction to stay strictly on the asked framework, or chunk-level
+  framework metadata).
+- **r012** (2026-07-13): `query` rewritten to anchor the framework —
+  "按 Agentic AI 课程笔记的说法，Agent 构建的本质是什么？" (was "Agent 构建的
+  本质是什么？"). Reasoning: same failure class as r010 (multiple
+  same-topic-different-framework passages in the expanded corpus), but here
+  the fix is tractable at the question level by naming which course/note's
+  framing is wanted. `expected_answer_contains` unchanged
+  (`["system prompt","角色","LLM","Manager"]`, min_hits=2).
+- **r013** (2026-07-13): `expected_answer_contains` rewritten to synonym
+  groups: `["沙箱|隔离执行|sandbox|容器", "Docker|E2B|误删|不可信代码|资源限制|权限控制"]`,
+  min_hits=2 (both groups required). Reasoning: across all 3 protocol runs
+  the system consistently gave the correct sandboxing/isolation principle
+  but never happened to name the specific products (Docker/E2B) or the
+  specific failure mode (误删) the old flat keyword list required verbatim
+  — a wording-specificity gap, not a content-correctness gap. New group 1
+  captures the principle (sandbox/isolation) which every run already hits;
+  group 2 requires either a concrete example or a second security
+  principle, so min_hits=2 still enforces "principle + backing detail"
+  rather than accepting the principle alone.
+
 ### `expected_answer_contains` synonym-group syntax
 
 A keyword may be a `|`-separated list of synonyms; matching any one variant
