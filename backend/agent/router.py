@@ -11,6 +11,7 @@ extra retrieval).
 from __future__ import annotations
 
 from llm.client import complete
+from llm.trace import write as _trace_write
 
 SYSTEM_PROMPT = """\
 You are a query router. Classify the user's request into exactly one of the \
@@ -82,14 +83,19 @@ def route(query: str) -> str:
         system=SYSTEM_PROMPT,
         temperature=0,  # deterministic output required for classification
     )
-    label = resp.text.strip().lower()
+    raw_text = resp.text or ""
+    label = raw_text.strip().lower()
 
     # Substring match handles verbose model output (e.g. "Category: rag").
     # Order direct → rag → agent: on ambiguity, prefer the cheaper/safer path.
     if "direct" in label:
-        return "direct"
-    if "rag" in label:
-        return "rag"
-    if "agent" in label:
-        return "agent"
-    return "rag"
+        decision = "direct"
+    elif "rag" in label:
+        decision = "rag"
+    elif "agent" in label:
+        decision = "agent"
+    else:
+        decision = "rag"
+
+    _trace_write({"type": "router_decision", "raw_text": raw_text, "decision": decision})
+    return decision

@@ -39,6 +39,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -68,6 +69,7 @@ print(f"[run_eval] LLM_MIN_INTERVAL_S={os.environ['LLM_MIN_INTERVAL_S']}")
 
 import config
 from agent.groundedness import check as _groundedness_check
+from llm.trace import context as _trace_context
 from agent.loop import run_agent
 from agent.router import route as _router_route
 from agent.tools.retrieve import RetrieveTool
@@ -78,6 +80,33 @@ from llm.client import complete
 GOLD_PATH = Path(__file__).parent / "gold_set.jsonl"
 DEFAULT_OUT = Path(__file__).parent / "results_baseline.jsonl"
 TOP_K = 5
+
+# Phrases that count as "this content came from web search, not the KB" for
+# the unanswerable-category source-disclosure check (see _has_source_disclosure).
+_SOURCE_DISCLOSURE_PHRASES = [
+    "网络搜索", "web search", "外部搜索", "互联网", "在线搜索", "网上搜索",
+    "非知识库", "不在知识库", "知识库中没有", "知识库中并未", "知识库未提及",
+    "来自网络", "并非来自知识库", "基于网络", "根据搜索结果", "外部来源",
+]
+
+
+# ── Keyword matching normalization ──────────────────────────────────────────
+
+def _normalize(text: str) -> str:
+    """NFKC (full-width→half-width) + ×→x + casefold, for keyword matching."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("×", "x")
+    return text.lower()
+
+
+def _keyword_hit(keyword: str, haystack_norm: str) -> bool:
+    """A keyword may be a '|'-separated synonym group; any variant matching counts."""
+    return any(_normalize(v) in haystack_norm for v in keyword.split("|"))
+
+
+def _has_source_disclosure(answer: str) -> bool:
+    norm = _normalize(answer)
+    return any(_normalize(p) in norm for p in _SOURCE_DISCLOSURE_PHRASES)
 
 _FAITH_SYSTEM = (
     "You are a strict RAG faithfulness judge. "
@@ -120,6 +149,11 @@ class ItemResult:
     grounded: Optional[bool] = None
     faithfulness: Optional[float] = None
     answer_relevancy: Optional[float] = None
+
+    # unanswerable-category only: None = honest refusal (no check needed),
+    # True/False = substantive content was given and did/didn't disclose
+    # that it came from web search rather than the KB.
+    source_disclosed: Optional[bool] = None
 
     latency_s: float = 0.0
     error: Optional[str] = None
@@ -234,6 +268,11 @@ def _run_agent_path(query: str, kb_id: int) -> tuple[str, list[str], Optional[bo
 # ── Single-item eval ───────────────────────────────────────────────────────────
 
 def eval_item(item: dict) -> ItemResult:
+    with _trace_context(item_id=item["id"]):
+        return _eval_item(item)
+
+
+def _eval_item(item: dict) -> ItemResult:
     t0 = time.time()
     is_boundary = (
         item.get("category") == "boundary"
@@ -269,8 +308,8 @@ def eval_item(item: dict) -> ItemResult:
             r = RetrieveTool(kb_id=item["kb_id"]).run(query=item["query"])
             retrieved_chunks = r.get("chunks", [])
             result.relevance_ok = r.get("relevance_ok", False)
-            chunks_text = " ".join(retrieved_chunks)
-            kw_hits = sum(1 for kw in keywords if kw in chunks_text)
+            chunks_norm = _normalize(" ".join(retrieved_chunks))
+            kw_hits = sum(1 for kw in keywords if _keyword_hit(kw, chunks_norm))
             result.retrieval_keyword_hits = kw_hits
             result.retrieval_hit = kw_hits >= 1
 
@@ -289,10 +328,29 @@ def eval_item(item: dict) -> ItemResult:
 
         result.answer = answer
 
+        if not answer.strip():
+            # No exception was raised, but the model produced no visible text
+            # (observed on gemini-3.5-flash: the max_turns wrap-up call can
+            # return content with empty/absent parts if the thinking budget
+            # is exhausted before the visible answer is emitted). Silently
+            # scoring this as contains_pass=False / grounded=None would
+            # under-report it as a normal miss rather than a failed call, and
+            # it would never get retried on resume. Treat it as an error so
+            # it's excluded from scoring and picked up again on resume.
+            raise RuntimeError(
+                "empty_answer: model returned no text (no exception raised)"
+            )
+
         # Layer 3b — contains check
-        hits = sum(1 for kw in keywords if kw in answer)
+        answer_norm = _normalize(answer)
+        hits = sum(1 for kw in keywords if _keyword_hit(kw, answer_norm))
         result.contains_hits = hits
         result.contains_pass = hits >= min_hits
+
+        # Layer 3b.2 — unanswerable-category source disclosure (only when the
+        # model gave substantive content instead of an honest refusal).
+        if item["category"] == "unanswerable" and not result.contains_pass and answer:
+            result.source_disclosed = _has_source_disclosure(answer)
 
         # Layer 3c — groundedness
         if item.get("grounding_required", False) and answer:
@@ -331,6 +389,7 @@ def aggregate(results: list[ItemResult]) -> dict:
     grounded_eligible = [r for r in results if r.grounded is not None]
     faith_vals = [r.faithfulness for r in results if r.faithfulness is not None]
     relev_vals = [r.answer_relevancy for r in results if r.answer_relevancy is not None]
+    source_checked = [r for r in results if r.source_disclosed is not None]
 
     return {
         "router_accuracy_strict":  _pct(sum(1 for r in results if r.route_correct), total),
@@ -344,6 +403,8 @@ def aggregate(results: list[ItemResult]) -> dict:
         "answer_relevancy_mean":   _mean(relev_vals),
         "faithfulness_n":          len(faith_vals),
         "answer_relevancy_n":      len(relev_vals),
+        "u_source_disclosure_rate": _pct(sum(1 for r in source_checked if r.source_disclosed), len(source_checked)),
+        "u_source_disclosure_n":  len(source_checked),
         "total":                   total,
         "errors":                  sum(1 for r in results if r.error),
     }
@@ -372,6 +433,7 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     print(f"\n[Layer 3] E2E Answer Quality")
     print(f"  contains_pass:      {agg['e2e_contains_pass']}")
     print(f"  grounded_rate:      {agg['grounded_rate']}")
+    print(f"  u_source_disclosure: {agg['u_source_disclosure_rate']}  (n={agg['u_source_disclosure_n']}, only items with substantive content)")
 
     print(f"\n[Layer 3] RAGAS-inspired  (agent-expected, n={agg['faithfulness_n']})")
     print(f"  faithfulness:       {agg['faithfulness_mean']}")
@@ -445,7 +507,29 @@ def _git_commit() -> str:
         return "unknown"
 
 
-def append_history(agg: dict, n_items: int, limit: Optional[int]) -> None:
+def _git_dirty() -> bool:
+    """True if tracked files have uncommitted changes (staged or not).
+
+    An eval archived against a dirty tree records a git_commit that doesn't
+    match the code that actually ran — see the 20260712_fixw4 incident.
+    Untracked files are deliberately excluded: eval/results/ accumulates
+    scratch artifacts (partial_*.jsonl checkpoints, run logs) that are
+    conventionally left untracked between runs, and their presence says
+    nothing about whether the code matches HEAD.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout
+        return bool(out.strip())
+    except Exception:
+        # Can't verify cleanliness (e.g. not a git repo) — treat as dirty
+        # rather than silently vouching for a state we couldn't check.
+        return True
+
+
+def append_history(agg: dict, n_items: int, limit: Optional[int], git_dirty: bool) -> None:
     """Append one aggregate record per eval run — the before/after comparison
     data source (Decisions §3: archive every run, keep the file in git)."""
     record = {
@@ -457,6 +541,8 @@ def append_history(agg: dict, n_items: int, limit: Optional[int]) -> None:
         "eval_key_used": bool(_eval_key),
         **agg,
     }
+    if git_dirty:
+        record["git_dirty"] = True
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(HISTORY_PATH, "a") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -474,16 +560,28 @@ def main() -> None:
     parser.add_argument("--run-id", default=None,
                         help="Resume ID; defaults to <date>_<commit>. Items already "
                              "in partial_<run_id>.jsonl are skipped on restart.")
+    parser.add_argument("--allow-dirty", action="store_true",
+                        help="Run even with uncommitted changes in the working tree. "
+                             "The archived history.jsonl record is forced to include "
+                             "\"git_dirty\": true so the mismatch is never silent.")
     args = parser.parse_args()
+
+    dirty = _git_dirty()
+    if dirty and not args.allow_dirty:
+        sys.exit(
+            "[run_eval] Working tree has uncommitted changes — refusing to run "
+            "(the archived record's git_commit would not match the code that "
+            "actually ran). Commit first, or pass --allow-dirty to override."
+        )
 
     _acquire_lock()
     try:
-        _run(args)
+        _run(args, git_dirty=dirty)
     finally:
         LOCK_PATH.unlink(missing_ok=True)
 
 
-def _run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace, git_dirty: bool) -> None:
     items = _load_gold(args.limit)
     print(f"Evaluating {len(items)} items …", flush=True)
 
@@ -531,7 +629,7 @@ def _run(args: argparse.Namespace) -> None:
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
     print(f"\nDetailed results → {out_path}")
 
-    append_history(agg, n_items=len(items), limit=args.limit)
+    append_history(agg, n_items=len(items), limit=args.limit, git_dirty=git_dirty)
     print()
 
 

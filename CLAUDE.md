@@ -14,6 +14,17 @@ The baseline has been tagged `v1-baseline`; that tag and its code must not be mo
 
 ---
 
+## Engineering Principles
+
+Full source: `docs-local/reference-AGENTS.md` (gitignored, not committed).
+
+- **Occam's Razor**: optimize for minimum conceptual surface area, not minimum line count. Distilled ≠ simple — a simple-looking primitive may merely push complexity onto every caller. Prefer a small number of expressive, coherent primitives over many narrow ones stitched together by ad hoc convention.
+- **Pre-hoc Occam, post-hoc slop cleanup**: early implementation should establish correct behavior and expose the essential model without speculative abstractions. Once behavior is proven, run a deliberate simplification pass — remove speculative abstractions, one-use wrappers, redundant validation, stale compatibility paths, and defensive handling for states that should be structurally impossible.
+- **SSOT (Single Source of Truth)**: every fact, rule, schema, or state transition has exactly one semantic owner. When two representations disagree, remove the competing authority rather than adding reconciliation logic.
+- **Regression discipline**: a bug fix is not complete until its reintroduction would be caught by a test.
+
+---
+
 ## Collaboration Rules (Mandatory)
 
 - **All code (including core modules)** is implemented directly by Claude — no more "pseudocode only, wait for user" step.
