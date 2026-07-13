@@ -6,7 +6,7 @@ on the loop — we must patch `agent.loop.complete` instead.
 
 Tool backends are patched at the module-level name they're bound to:
   - chroma_client.query_documents  (accessed via module ref in retrieve.py)
-  - agent.tools.web_search._ddgs_search  (bound locally in web_search.py)
+  - agent.tools.web_search.WebSearchTool.run  (patched to avoid real network calls)
 """
 
 from unittest.mock import MagicMock, patch
@@ -49,7 +49,7 @@ def loop_seq():
 def mock_tools():
     """Stub tool backends so no network or DB calls are made."""
     with patch("chroma_client.query_documents", return_value=[]), \
-         patch("agent.tools.web_search._ddgs_search", return_value=[]):
+         patch("agent.tools.web_search.WebSearchTool.run", return_value={"results": [], "evidence": []}):
         yield
 
 
@@ -70,6 +70,41 @@ def test_two_tool_calls_then_final(loop_seq, mock_tools):
         "final",
     ]
     assert events[-1].data["text"] == "Final answer."
+
+
+def test_parallel_tool_calls_share_one_user_message(loop_seq, mock_tools):
+    """Two functionCalls in one model turn → all functionResponses collected
+    into a single user message (Gemini parallel-call contract), and roles
+    alternate model/user with no consecutive user messages."""
+    loop_seq([
+        LLMResponse(
+            text=None,
+            tool_calls=[
+                ToolCall("retrieve", {"query": "concept A"}),
+                ToolCall("retrieve", {"query": "concept B"}),
+            ],
+            raw={},
+        ),
+        _text("Final answer."),
+    ])
+    with patch("agent.loop._check_groundedness", return_value={"supported": True, "unsupported_sentences": []}):
+        events = _run()
+
+    assert [e.type for e in events] == [
+        "tool_call", "tool_result",
+        "tool_call", "tool_result",
+        "final",
+    ]
+
+    messages = events[-1].data["messages"]
+    # [user query, model (2 functionCalls), user (2 functionResponses)]
+    roles = [m["role"] for m in messages]
+    assert roles == ["user", "model", "user"]
+
+    model_calls = [p for p in messages[1]["parts"] if "functionCall" in p]
+    fr_parts = [p for p in messages[2]["parts"] if "functionResponse" in p]
+    assert len(model_calls) == 2
+    assert len(fr_parts) == 2
 
 
 def test_max_turns_forces_wrap_up(loop_seq, mock_tools):

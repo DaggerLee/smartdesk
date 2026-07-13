@@ -182,3 +182,26 @@ def test_groundedness_pass(mock_groundedness_ok):
     assert finals[0].data["text"] == "Well-grounded answer."
     assert finals[0].data["grounded"] is True
     assert loop_complete.call_count == 2  # no revision call
+
+
+# ── Mechanism 1: web_search exception propagates ───────────────────────────────
+
+def test_web_search_exception_triggers_mechanism1(mock_groundedness_ok):
+    """web_search raising an exception yields failed tool_result (not silent empty)."""
+    with patch("agent.tools.web_search.WebSearchTool.run",
+               side_effect=RuntimeError("ddgs not installed")):
+        loop_complete = MagicMock(side_effect=[
+            _resp(tool_calls=[_tc("web_search", {"query": "latest news"})]),
+            _resp(text="I could not retrieve web results."),
+        ])
+        with patch("agent.loop.complete", loop_complete):
+            events = list(run_agent("latest news", kb_id=1))
+
+    tool_results = [e for e in events if e.type == "tool_result"]
+    finals = [e for e in events if e.type == "final"]
+
+    assert len(tool_results) == 1
+    assert tool_results[0].data["failed"] is True
+    assert tool_results[0].data["name"] == "web_search"
+    assert len(finals) == 1
+    assert loop_complete.call_count == 2

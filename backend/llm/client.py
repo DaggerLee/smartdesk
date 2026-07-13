@@ -7,6 +7,9 @@ gemini_client.py is kept as-is for the existing v1 routes.
 
 import json
 import logging
+import os
+import re
+import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
@@ -16,8 +19,6 @@ import config
 from llm.trace import span as _trace_span, write as _trace_write
 
 logger = logging.getLogger(__name__)
-
-_cached_model: Optional[str] = None
 
 
 # ── Response types ─────────────────────────────────────────────────────────────
@@ -35,31 +36,125 @@ class LLMResponse:
     raw: dict                  # full API response, used by trace logger
 
 
-# ── Model discovery ───────────────────────────────────────────────────────────
+# ── Secret hygiene ────────────────────────────────────────────────────────────
+
+def _redact(text: str) -> str:
+    """Mask the API key query param so exception text never leaks secrets.
+
+    requests puts the full URL (including ?key=…) into every HTTPError and
+    connection-error message; those strings end up in eval result files and
+    pasted logs, so they must be scrubbed at the raise site.
+    """
+    return re.sub(r"key=[^&\s\"']+", "key=***", text)
+
+
+def _post(url: str, **kwargs) -> requests.Response:
+    """requests.post with key-redacted exception messages."""
+    try:
+        return requests.post(url, **kwargs)
+    except requests.RequestException as exc:
+        raise type(exc)(_redact(str(exc))) from None
+
+
+def _raise_for_status(resp: requests.Response) -> None:
+    """resp.raise_for_status() with a key-redacted error message."""
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        raise requests.HTTPError(_redact(str(exc)), response=resp) from None
+
+
+# ── Model validation ──────────────────────────────────────────────────────────
+
+_model_validated = False
+
 
 def _find_model() -> str:
-    global _cached_model
-    if _cached_model:
-        return _cached_model
+    """Return config.GEMINI_MODEL, validating its availability once per process.
 
-    resp = requests.get(
-        f"{config.GEMINI_BASE_URL}/models?key={config.GEMINI_API_KEY}",
-        timeout=15,
-    )
+    The model name is single-sourced in config — this function never
+    auto-picks. It only confirms the configured model exists for this API key
+    and supports generateContent, so traces and eval archives always record
+    exactly the model that was called.
+    """
+    global _model_validated
+    if _model_validated:
+        return config.GEMINI_MODEL
+
+    try:
+        resp = requests.get(
+            f"{config.GEMINI_BASE_URL}/models?key={config.GEMINI_API_KEY}",
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"ListModels request failed: {_redact(str(exc))}") from None
     if resp.status_code != 200:
-        raise RuntimeError(f"ListModels failed ({resp.status_code}): {resp.text}")
+        raise RuntimeError(f"ListModels failed ({resp.status_code}): {_redact(resp.text)}")
 
-    models = resp.json().get("models", [])
-    for m in models:
-        if "generateContent" in m.get("supportedGenerationMethods", []):
-            _cached_model = m["name"]
-            logger.info(f"[llm] Selected model: {_cached_model}")
-            return _cached_model
+    methods_by_name = {
+        m["name"]: m.get("supportedGenerationMethods", [])
+        for m in resp.json().get("models", [])
+    }
+    methods = methods_by_name.get(config.GEMINI_MODEL)
+    if methods is None:
+        raise RuntimeError(
+            f"Configured model {config.GEMINI_MODEL!r} not available for this "
+            f"API key. Available: {sorted(methods_by_name)}"
+        )
+    if "generateContent" not in methods:
+        raise RuntimeError(
+            f"Configured model {config.GEMINI_MODEL!r} does not support generateContent."
+        )
+    logger.info(f"[llm] Validated model: {config.GEMINI_MODEL}")
+    _model_validated = True
+    return config.GEMINI_MODEL
 
-    raise RuntimeError("No model supporting generateContent found.")
+
+# ── Global rate limiter ───────────────────────────────────────────────────────
+
+_last_call_ts = 0.0
+
+
+def _throttle() -> None:
+    """Enforce a minimum interval between LLM requests, across ALL callers.
+
+    Controlled by LLM_MIN_INTERVAL_S (default 0 = disabled). Eval runs set it
+    to ~6 so router/judge/generate/groundedness calls can't burst past the
+    free-tier RPM limit; production paths leave it unset and are unaffected.
+    """
+    global _last_call_ts
+    min_interval = float(os.getenv("LLM_MIN_INTERVAL_S", "0"))
+    if min_interval <= 0:
+        return
+    wait = _last_call_ts + min_interval - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_call_ts = time.monotonic()
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
+
+def model_turn(resp: LLMResponse) -> dict:
+    """Build the model-role history message for a tool-call response.
+
+    Echoes the raw candidate content verbatim when available: thinking models
+    (gemini-3.5+) attach a thoughtSignature to functionCall parts and reject
+    replayed history that drops it, so the model turn must not be
+    reconstructed from parsed tool calls. The reconstruction below is only a
+    fallback for tests that use synthetic responses (raw={}).
+    """
+    try:
+        content = resp.raw["candidates"][0]["content"]
+        return {"role": content.get("role", "model"), "parts": content["parts"]}
+    except (KeyError, IndexError, TypeError):
+        return {
+            "role": "model",
+            "parts": [
+                {"functionCall": {"name": tc.name, "args": tc.args}}
+                for tc in resp.tool_calls
+            ],
+        }
+
 
 def complete(
     messages: list[dict],
@@ -99,8 +194,17 @@ def complete(
         "has_system": bool(system),
     }
     with _trace_span(_entry) as _out:
-        resp = requests.post(url, json=body, timeout=30)
-        resp.raise_for_status()
+        _delay = 30
+        for _attempt in range(6):
+            _throttle()
+            resp = _post(url, json=body, timeout=30)
+            if resp.status_code in (429, 500, 503, 504) and _attempt < 5:
+                logger.warning(f"[llm] {resp.status_code} transient, retrying in {_delay}s (attempt {_attempt+1}/5)")
+                time.sleep(_delay)
+                _delay = min(_delay * 2, 120)
+                continue
+            _raise_for_status(resp)
+            break
         data = resp.json()
 
         parts = data["candidates"][0]["content"].get("parts", [])
@@ -139,13 +243,13 @@ def stream(messages: list[dict], system: str | None = None) -> Iterator[str]:
         body["systemInstruction"] = {"parts": [{"text": system}]}
 
     chunks: list[str] = []
-    with requests.post(
+    with _post(
         url,
         json=body,
         stream=True,
         timeout=60,
     ) as resp:
-        resp.raise_for_status()
+        _raise_for_status(resp)
         for raw_line in resp.iter_lines():
             if not raw_line:
                 continue
