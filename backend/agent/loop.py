@@ -3,13 +3,19 @@ agent/loop.py — SmartDesk v2 agent main loop
 
 Generator function that yields AgentEvent; the SSE layer is responsible for
 serialising and streaming the events.
-W1: tool exceptions propagate directly (no try/catch); unknown tool names raise
-immediately (W2 will turn this into a self-healing trigger point).
+
+Self-healing mechanisms (W2):
+  1. Tool error retry  — exceptions and unknown tool names feed an error
+     functionResponse back to the LLM instead of raising; after
+     _MAX_TOOL_FAILURES the model is told the tool is unavailable.
+  2. Low retrieval relevance — retrieve returning relevance_ok=False injects a
+     rewrite hint so the model tries a different query (capped at _MAX_REWRITES).
+  3. Groundedness check — final answer is audited by LLM-as-judge; one revision
+     pass is attempted if unsupported sentences are found.
 
 Evidence protocol: Tool.run() returns a dict that may contain an "evidence" key
 (list[{"text": str, "source": str}]).  The loop accumulates all evidence into
-state.evidence for the W3 groundedness check.  Both retrieve and web_search
-follow this convention.
+state.evidence for the groundedness check.
 """
 
 from __future__ import annotations
@@ -17,16 +23,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Generator
 
+from agent.groundedness import check as _check_groundedness
 from agent.state import AgentState
 from agent.tools.retrieve import RetrieveTool
 from agent.tools.web_search import WebSearchTool
-from llm.client import complete
 from config import MAX_AGENT_TURNS
+from llm.client import complete
+from llm.trace import span as _trace_span, write as _trace_write
 
 
-# ──────────────────────────────────────────────
-# Event dataclass
-# ──────────────────────────────────────────────
+# ── Event dataclass ────────────────────────────────────────────────────────────
 
 @dataclass
 class AgentEvent:
@@ -34,10 +40,7 @@ class AgentEvent:
     data: dict
 
 
-# ──────────────────────────────────────────────
-# System prompt (passed via systemInstruction in llm/client.py; does not
-# consume a conversation turn)
-# ──────────────────────────────────────────────
+# ── System prompt ──────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
 You are the reasoning core of SmartDesk, a knowledge assistant that answers \
@@ -68,8 +71,32 @@ instead of guessing.
 supporting details.
 """
 
-# Appended to the last message's parts when max_turns is hit, forcing a final
-# answer without further tool calls.
+# ── Self-healing constants ─────────────────────────────────────────────────────
+
+_MAX_TOOL_FAILURES = 2   # per tool name per run_agent() call
+_MAX_REWRITES = 1        # rewrite attempts before giving up on low relevance
+
+_TOOL_UNAVAILABLE_MSG = (
+    "Tool '{name}' has failed {count} time(s) and is no longer available. "
+    "Answer the user's question using only the evidence already gathered. "
+    "If the evidence is insufficient, say so explicitly."
+)
+
+_REWRITE_HINT = (
+    "The retrieval results have low relevance to the query. "
+    "Rewrite the search query with different, more specific terms and try retrieve again."
+)
+
+_GROUNDEDNESS_REVISION_PREFIX = (
+    "The following sentences in your answer could not be verified against the evidence:\n"
+)
+_GROUNDEDNESS_REVISION_SUFFIX = (
+    "\n\nRevise the answer to remove or correct these claims, or explicitly state that "
+    "the information was not found in the evidence. Do not call any tools."
+)
+
+# Appended to the last user-role message parts when max_turns is hit so the
+# model is forced to answer without making more tool calls.
 _WRAP_UP_INSTRUCTION = (
     "Based on the information gathered above, answer the user's question now. "
     "Do not call any more tools. If the evidence is insufficient, say so "
@@ -77,9 +104,7 @@ _WRAP_UP_INSTRUCTION = (
 )
 
 
-# ──────────────────────────────────────────────
-# Main loop
-# ──────────────────────────────────────────────
+# ── Main loop ──────────────────────────────────────────────────────────────────
 
 def run_agent(
     query: str,
@@ -92,34 +117,30 @@ def run_agent(
     Args:
         query:     The raw user question.
         kb_id:     Knowledge base ID passed to RetrieveTool.
-        max_turns: Maximum number of tool-call rounds (safety cap, not the
-                   loop driver).
+        max_turns: Maximum number of tool-call rounds (safety cap).
     """
-
-    # ── Tool registry ──
     tools_registry: dict[str, Any] = {
         "retrieve":   RetrieveTool(kb_id=kb_id),
         "web_search": WebSearchTool(),
     }
     declarations = [tool.declaration for tool in tools_registry.values()]
 
-    # ── Initialise state; system prompt goes via systemInstruction, not as a
-    #    fake conversation turn ──
     state = AgentState(
         query=query,
         messages=[{"role": "user", "parts": [{"text": query}]}],
     )
 
-    # ── Main loop ──
+    _tool_fail_counts: dict[str, int] = {}  # { tool_name: failure_count }
+    _rewrite_count = 0
+
     while state.turn < max_turns:
 
         resp = complete(state.messages, tools=declarations, system=SYSTEM_PROMPT)
 
-        # ── Branch A: model requested a tool call ──
+        # ── Branch A: model requested tool calls ───────────────────────────────
         if resp.tool_calls:
 
-            # The model turn containing the functionCall must be echoed back
-            # before appending the tool result.
+            # Echo the model turn (all functionCall parts together) before results.
             state.messages.append({
                 "role": "model",
                 "parts": [
@@ -129,33 +150,64 @@ def run_agent(
             })
 
             for tc in resp.tool_calls:
-                yield AgentEvent(
-                    type="tool_call",
-                    data={"name": tc.name, "args": tc.args},
-                )
+                yield AgentEvent(type="tool_call", data={"name": tc.name, "args": tc.args})
 
-                # W1: unknown tool raises immediately; W2 will self-heal here.
+                # Mechanism 1a: unknown tool name
                 if tc.name not in tools_registry:
-                    raise KeyError(
-                        f"[loop] Unknown tool: {tc.name!r}. "
-                        f"Registered tools: {list(tools_registry)}"
+                    _tool_fail_counts[tc.name] = _tool_fail_counts.get(tc.name, 0) + 1
+                    err_msg = f"Unknown tool: {tc.name!r}. Available: {list(tools_registry)}"
+                    _trace_write({
+                        "type": "tool_error",
+                        "tool": tc.name,
+                        "error": err_msg,
+                        "fail_count": _tool_fail_counts[tc.name],
+                        "unavailable": _tool_fail_counts[tc.name] >= _MAX_TOOL_FAILURES,
+                    })
+                    _append_tool_error(state, tc.name, {"error": err_msg}, _tool_fail_counts)
+                    yield AgentEvent(
+                        type="tool_result",
+                        data={"name": tc.name, "result_summary": "[ERROR] unknown tool", "failed": True},
                     )
+                    continue
 
-                result: dict = tools_registry[tc.name].run(**tc.args)  # W1: exceptions propagate
+                # Mechanism 1b: tool execution exception
+                try:
+                    result: dict = tools_registry[tc.name].run(**tc.args)
+                except Exception as exc:
+                    _tool_fail_counts[tc.name] = _tool_fail_counts.get(tc.name, 0) + 1
+                    _trace_write({
+                        "type": "tool_error",
+                        "tool": tc.name,
+                        "error": str(exc),
+                        "fail_count": _tool_fail_counts[tc.name],
+                        "unavailable": _tool_fail_counts[tc.name] >= _MAX_TOOL_FAILURES,
+                    })
+                    _append_tool_error(state, tc.name, {"error": str(exc)}, _tool_fail_counts)
+                    yield AgentEvent(
+                        type="tool_result",
+                        data={"name": tc.name, "result_summary": f"[ERROR] {exc}", "failed": True},
+                    )
+                    continue
 
-                # Accumulate evidence from all tools (including web_search).
                 state.evidence.extend(result.get("evidence", []))
 
-                # functionResponse.response must be a JSON-serialisable dict.
-                state.messages.append({
-                    "role": "user",
-                    "parts": [{
-                        "functionResponse": {
-                            "name": tc.name,
-                            "response": result,
-                        }
-                    }],
-                })
+                # Build the functionResponse; append rewrite hint if relevance is low.
+                fr_parts: list[dict] = [
+                    {"functionResponse": {"name": tc.name, "response": result}}
+                ]
+
+                # Mechanism 2: low retrieval relevance → inject rewrite hint (capped)
+                if tc.name == "retrieve" and not result.get("relevance_ok", True):
+                    if _rewrite_count < _MAX_REWRITES:
+                        _rewrite_count += 1
+                        fr_parts.append({"text": _REWRITE_HINT})
+                        _trace_write({
+                            "type": "rewrite_hint",
+                            "tool": "retrieve",
+                            "rewrite_count": _rewrite_count,
+                        })
+
+                state.messages.append({"role": "user", "parts": fr_parts})
 
                 yield AgentEvent(
                     type="tool_result",
@@ -165,31 +217,84 @@ def run_agent(
             state.turn += 1
             continue
 
-        # ── Branch B: model returned text — enough information to answer ──
+        # ── Branch B: model returned text — enough information to answer ───────
         state.status = "done"
-        yield AgentEvent(
-            type="final",
-            data={"text": resp.text, "evidence": state.evidence, "messages": state.messages},
-        )
+
+        # Mechanism 3: groundedness check with one revision pass
+        with _trace_span({"type": "groundedness_check"}) as _t:
+            grounded = _check_groundedness(resp.text or "", state.evidence)
+            _t["supported"] = grounded["supported"]
+            _t["unsupported_count"] = len(grounded["unsupported_sentences"])
+            _t["unsupported_sentences"] = grounded["unsupported_sentences"]
+
+        if not grounded["supported"]:
+            unsupported_list = "\n".join(f"- {s}" for s in grounded["unsupported_sentences"])
+            revision_msg = (
+                _GROUNDEDNESS_REVISION_PREFIX + unsupported_list + _GROUNDEDNESS_REVISION_SUFFIX
+            )
+            state.messages.append({"role": "user", "parts": [{"text": revision_msg}]})
+            revised = complete(state.messages, tools=None, system=SYSTEM_PROMPT)
+
+            with _trace_span({"type": "groundedness_recheck"}) as _t2:
+                grounded2 = _check_groundedness(revised.text or "", state.evidence)
+                _t2["supported"] = grounded2["supported"]
+                _t2["unsupported_sentences"] = grounded2["unsupported_sentences"]
+                _t2["grounded_final"] = grounded2["supported"]
+
+            yield AgentEvent(
+                type="final",
+                data={
+                    "text": revised.text,
+                    "evidence": state.evidence,
+                    "messages": state.messages,
+                    "grounded": grounded2["supported"],
+                },
+            )
+        else:
+            yield AgentEvent(
+                type="final",
+                data={
+                    "text": resp.text,
+                    "evidence": state.evidence,
+                    "messages": state.messages,
+                    "grounded": True,
+                },
+            )
         return
 
-    # ── Loop exited — max_turns safety cap reached ──
+    # ── Loop exited — max_turns safety cap reached ─────────────────────────────
     state.status = "max_turns"
-    # At this point the last message is always user-role (either a
-    # functionResponse or the original query when max_turns=0).  Append the
-    # wrap-up instruction to its parts list rather than adding a new message,
-    # to avoid consecutive user-role messages which cause a Gemini 400.
     state.messages[-1]["parts"].append({"text": _WRAP_UP_INSTRUCTION})
-    resp = complete(state.messages, tools=None, system=SYSTEM_PROMPT)  # no tools — force answer
+    resp = complete(state.messages, tools=None, system=SYSTEM_PROMPT)
     yield AgentEvent(
         type="final",
-        data={"text": resp.text, "evidence": state.evidence, "messages": state.messages},
+        data={
+            "text": resp.text,
+            "evidence": state.evidence,
+            "messages": state.messages,
+            "grounded": None,   # groundedness not checked at max_turns exit
+        },
     )
 
 
-# ──────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _append_tool_error(
+    state: AgentState,
+    tool_name: str,
+    error_payload: dict,
+    fail_counts: dict[str, int],
+) -> None:
+    """Append an error functionResponse; inject unavailability notice when threshold is hit."""
+    parts: list[dict] = [{"functionResponse": {"name": tool_name, "response": error_payload}}]
+    if fail_counts.get(tool_name, 0) >= _MAX_TOOL_FAILURES:
+        parts.append({
+            "text": _TOOL_UNAVAILABLE_MSG.format(
+                name=tool_name, count=fail_counts[tool_name]
+            )
+        })
+    state.messages.append({"role": "user", "parts": parts})
+
 
 def _summarize(result: dict, max_chars: int = 200) -> str:
     """Truncate a tool result to a readable summary for progress display."""

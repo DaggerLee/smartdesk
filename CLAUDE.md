@@ -12,9 +12,9 @@ The baseline has been tagged `v1-baseline`; that tag and its code must not be mo
 
 ## Collaboration Rules (Mandatory)
 
-- **Core modules** (agent loop, reflection logic, eval rubric and gold-set design): output design proposal + interface signatures + pseudocode only, then stop and wait for the user to implement; review and debug after the user finishes. Do not write the full implementation of these files on the user's behalf.
-- **Can implement directly**: scaffolding, configuration, SSE/async glue code, unit tests, refactoring, README, bug fixes.
-- Definition of "module complete": tests pass + the user can explain the design decisions without looking at the code.
+- **All code (including core modules)** is implemented directly by Claude — no more "pseudocode only, wait for user" step.
+- After each core change, include a 3-5 sentence design explanation: what changed, why it was designed that way.
+- Quality standard unchanged: tests green + design decisions explainable.
 - Git: one branch per module (feat/router, feat/agent-loop, feat/self-healing, feat/eval…), commit messages in English, run all tests before merging.
 - **Communicate with the user in Chinese**; all code, comments, API strings, and file content in English.
 
