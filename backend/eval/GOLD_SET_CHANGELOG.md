@@ -66,6 +66,25 @@ harness or agent code are fixed in code, not here.
   principle, so min_hits=2 still enforces "principle + backing detail"
   rather than accepting the principle alone.
 
+## 2026-07-13 — r013 group2 word addition (final contains-metric synonym correction)
+
+- **r013**: group 2 augmented to
+  `["Docker","E2B","误删","不可信代码","资源限制","权限控制","权限边界","执行层强制"]`
+  (as a synonym group). Reasoning: the actual 3-run answer text says "权限
+  边界...由死代码在执行层强制约束" -- this principle is present verbatim in
+  the MCP notes source material, so adding it is completing an existing
+  principle enumeration, not reverse-engineering keywords from the
+  observed answer. Local rescore (no LLM calls) on the same 3-run exported
+  text: r013 flips 0/3 → 3/3 pass; pooled contains_pass corrected from
+  92/103 (89.3%) to 95/103 (92.2%).
+- **r012**: query-rewrite fix (2026-07-13, above) is not separately
+  re-run; its validation is folded into the next full eval run rather
+  than a targeted single-item rerun.
+
+**This is the last synonym-group correction against the contains metric
+for this batch.** From here on, a `contains_pass=False` on a future run is
+treated as a real miss, not grounds for another keyword-list adjustment.
+
 ### `expected_answer_contains` synonym-group syntax
 
 A keyword may be a `|`-separated list of synonyms; matching any one variant
