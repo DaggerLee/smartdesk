@@ -328,6 +328,19 @@ def _eval_item(item: dict) -> ItemResult:
 
         result.answer = answer
 
+        if not answer.strip():
+            # No exception was raised, but the model produced no visible text
+            # (observed on gemini-3.5-flash: the max_turns wrap-up call can
+            # return content with empty/absent parts if the thinking budget
+            # is exhausted before the visible answer is emitted). Silently
+            # scoring this as contains_pass=False / grounded=None would
+            # under-report it as a normal miss rather than a failed call, and
+            # it would never get retried on resume. Treat it as an error so
+            # it's excluded from scoring and picked up again on resume.
+            raise RuntimeError(
+                "empty_answer: model returned no text (no exception raised)"
+            )
+
         # Layer 3b — contains check
         answer_norm = _normalize(answer)
         hits = sum(1 for kw in keywords if _keyword_hit(kw, answer_norm))
