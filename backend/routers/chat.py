@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import uuid
 from typing import Generator, List, Optional
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import chroma_client
+from agent.graph import run_graph
 from agent.loop import SYSTEM_PROMPT, run_agent
 from agent.router import route
 from auth import get_current_user
@@ -115,11 +117,32 @@ def chat_stream(
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     request_id = uuid.uuid4().hex[:12]
+    _sse_headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+    # ── LangGraph skeleton switch (default off — see agent/graph.py) ─────────
+    # Off by default so production behaviour is byte-for-byte unchanged; the
+    # legacy route()/run_agent()/inline-RAG-chain path below is the fallback.
+    if os.getenv("SMARTDESK_AGENT_BACKEND") == "langgraph":
+        def generate_langgraph() -> Generator[str, None, None]:
+            with _trace_context(request_id=request_id):
+                recent_history = (
+                    db.query(Conversation)
+                    .filter(Conversation.kb_id == body.kb_id)
+                    .order_by(Conversation.created_at.desc())
+                    .limit(5)
+                    .all()
+                )
+                result = run_graph(body.message, body.kb_id, history=list(reversed(recent_history)))
+                answer = result.get("answer", "")
+                yield f"data: {json.dumps(answer, ensure_ascii=False)}\n\n"
+                db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
+                db.commit()
+                yield "data: [DONE]\n\n"
+        return StreamingResponse(generate_langgraph(), media_type="text/event-stream", headers=_sse_headers)
+
     with _trace_context(request_id=request_id):
         path = route(body.message)
     print(f"[Chat] Route: {path!r} — {body.message!r}")
-
-    _sse_headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
     # ── direct: conversational reply, no retrieval ────────────────────────────
     if path == "direct":
