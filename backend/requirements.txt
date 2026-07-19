@@ -1,4 +1,9 @@
 fastapi>=0.104.0
+# Pinned: fastapi 0.128.1 requires starlette<0.51.0,>=0.40.0; sse-starlette/mcp
+# (fastmcp's transitive deps) only floor it at >=0.49.1. Left unpinned, a
+# fastmcp/mcp reinstall silently pulled starlette to 1.3.1 on 2026-07-06,
+# breaking every APIRouter() call app-wide until this was diagnosed on 2026-07-18.
+starlette==0.50.0
 uvicorn>=0.24.0
 sqlalchemy>=2.0.0
 chromadb>=0.4.18
