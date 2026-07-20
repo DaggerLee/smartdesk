@@ -6,9 +6,19 @@ does — it calls the same functions chat.py already calls (route(), run_agent()
 chroma_client.query_documents(), generate_answer_stream(), ...) and only adds
 the graph-level plumbing around them.
 
-Fallback: agent/loop.py, agent/router.py, and routers/chat.py's inline RAG
-chain are unmodified and remain fully functional on their own. run_graph()
-here is an alternate entry point, not a replacement.
+W5 T2: the agent path is further split from a single coarse-grained agent_node
+(which wrapped run_agent() wholesale) into llm_node / tool_node / rewrite_node /
+groundedness_node, expressing the three W2 self-healing mechanisms as graph
+nodes and edges instead of an opaque function call. The prompts and tuning
+constants (SYSTEM_PROMPT, _MAX_TOOL_FAILURES, _MAX_REWRITES, hint/notice text)
+are imported from agent.loop — the single source of truth — not copied, so the
+graph and legacy paths can never drift on these values.
+
+Fallback: agent/loop.py (run_agent(), unmodified), agent/router.py, and
+routers/chat.py's inline RAG chain remain fully functional on their own and are
+what routers/chat.py calls by default. run_graph() is only reached when
+SMARTDESK_AGENT_BACKEND=langgraph is set (see routers/chat.py) — production
+traffic is on the legacy path unless that switch is flipped.
 
 Known duplication (intentional, flagged for a later cleanup pass): the RAG
 branch logic in rag_node() mirrors routers/chat.py's inline chain rather than
@@ -30,11 +40,32 @@ from typing import Optional, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 import chroma_client
-from agent.loop import run_agent
+from agent.groundedness import check as _check_groundedness
+from agent.loop import (
+    SYSTEM_PROMPT,
+    _error_parts,
+    _GROUNDEDNESS_REVISION_PREFIX,
+    _GROUNDEDNESS_REVISION_SUFFIX,
+    _MAX_REWRITES,
+    _MAX_TOOL_FAILURES,
+    _REWRITE_HINT,
+    _WRAP_UP_INSTRUCTION,
+)
 from agent.router import route
+from agent.tools.retrieve import RetrieveTool
+from agent.tools.web_search import WebSearchTool
+from config import MAX_AGENT_TURNS
 from gemini_client import generate_answer_stream
-from llm.client import stream as llm_stream
+from llm.client import complete, model_turn, stream as llm_stream
+from llm.trace import span as _trace_span, write as _trace_write
 from tools import assess_rag_quality, fetch_weather, is_weather_query, web_search
+
+# Mirrors agent/loop.py's groundedness check, which structurally allows exactly
+# one revision pass (no named constant there — the "cap" is implicit in the
+# code shape: revise once, accept whatever the recheck says). Named here
+# because the graph needs an explicit State counter to enforce it across node
+# visits; the value is copied as-is, not retuned.
+_MAX_REVISIONS = 1
 
 # Copy of routers/chat.py's _classify — see module docstring for why this
 # isn't an import.
@@ -96,6 +127,16 @@ class GraphState(TypedDict, total=False):
     messages: list[dict]
     evidence: list[dict]
     grounded: Optional[bool]
+
+    # agent path — self-healing mechanism state (W5 T2)
+    turn: int                       # tool-call round counter, mirrors legacy AgentState.turn
+    pending_tool_calls: Optional[list]   # ToolCall list awaiting tool_node execution
+    tool_fail_counts: dict[str, int]     # mechanism 1: per-tool-name failure count, capped at _MAX_TOOL_FAILURES
+    rewrite_count: int                   # mechanism 2: low-relevance rewrites issued, capped at _MAX_REWRITES
+    pending_rewrite: bool                # transient: tool_node found a low-relevance retrieve eligible for rewrite
+    revision_count: int                  # mechanism 3: groundedness revisions issued, capped at _MAX_REVISIONS
+    pending_revision: bool               # transient: next llm_node call is a groundedness revision (tools=None)
+    wrap_up: bool                        # transient: llm_node took the max_turns forced-answer branch
 
     # rag path
     msg_type: str
@@ -196,20 +237,191 @@ def rag_node(state: GraphState) -> dict:
     }
 
 
-def agent_node(state: GraphState) -> dict:
-    """Calls run_agent() (existing loop, unmodified) and takes its final event."""
-    final_data: Optional[dict] = None
-    for event in run_agent(state["query"], state["kb_id"]):
-        if event.type == "final":
-            final_data = event.data
+def _build_tools_registry(kb_id: int) -> dict:
+    return {"retrieve": RetrieveTool(kb_id=kb_id), "web_search": WebSearchTool()}
 
-    assert final_data is not None, "run_agent() ended without yielding a final event"
+
+def llm_node(state: GraphState) -> dict:
+    """Gemini call + function-calling decision — the reasoning step of the
+    agent path. Also owns the two forced, tool-free completions that don't
+    involve a fresh model decision: the groundedness revision continuation
+    (mechanism 3) and the max_turns wrap-up answer.
+    """
+    messages = list(state.get("messages") or [{"role": "user", "parts": [{"text": state["query"]}]}])
+    turn = state.get("turn", 0)
+
+    # Mechanism 3 continuation: groundedness_node routed back here after
+    # appending a revision prompt. No tool calling on a revision pass.
+    if state.get("pending_revision"):
+        resp = complete(messages, tools=None, system=SYSTEM_PROMPT)
+        return {"answer": resp.text or "", "pending_revision": False}
+
+    # Safety cap reached: force a tool-free wrap-up answer and skip
+    # groundedness entirely (mirrors legacy's grounded=None at max_turns exit).
+    if turn >= MAX_AGENT_TURNS:
+        last = dict(messages[-1])
+        last["parts"] = [*last["parts"], {"text": _WRAP_UP_INSTRUCTION}]
+        messages[-1] = last
+        resp = complete(messages, tools=None, system=SYSTEM_PROMPT)
+        return {"messages": messages, "answer": resp.text or "", "grounded": None, "wrap_up": True}
+
+    tools_registry = _build_tools_registry(state["kb_id"])
+    declarations = [tool.declaration for tool in tools_registry.values()]
+    resp = complete(messages, tools=declarations, system=SYSTEM_PROMPT)
+
+    if resp.tool_calls:
+        # Echo the model turn verbatim (raw parts keep the thoughtSignature
+        # that gemini-3.5+ requires on replayed functionCall history).
+        messages.append(model_turn(resp))
+        return {"messages": messages, "pending_tool_calls": resp.tool_calls}
+
+    return {"answer": resp.text or ""}
+
+
+def _llm_route_edge(state: GraphState) -> str:
+    """Route llm_node's output. The final leg (-> groundedness_node) is a
+    fixed transition for every genuine final answer: no judge or LLM decides
+    whether the check happens, only llm_node's own tool-calls-vs-text /
+    wrap_up shape determines which branch is taken.
+    """
+    if state.get("pending_tool_calls"):
+        return "tool_node"
+    if state.get("wrap_up"):
+        return END
+    return "groundedness_node"
+
+
+def tool_node(state: GraphState) -> dict:
+    """Execute the pending tool calls and fold results back into one
+    functionResponse turn (Gemini requires every functionResponse from a
+    parallel-call round to land in a single user message).
+
+    Mechanism 1 (tool error retry): unknown tool names and exceptions become
+    an error functionResponse instead of raising, so the graph routes back to
+    llm_node rather than aborting; after _MAX_TOOL_FAILURES an unavailability
+    notice is injected too.
+    """
+    messages = list(state["messages"])
+    evidence = list(state.get("evidence") or [])
+    tool_fail_counts = dict(state.get("tool_fail_counts") or {})
+    rewrite_count = state.get("rewrite_count", 0)
+
+    tools_registry = _build_tools_registry(state["kb_id"])
+    pending_rewrite = False
+    fr_parts: list[dict] = []
+
+    for tc in state.get("pending_tool_calls") or []:
+        if tc.name not in tools_registry:
+            tool_fail_counts[tc.name] = tool_fail_counts.get(tc.name, 0) + 1
+            err_msg = f"Unknown tool: {tc.name!r}. Available: {list(tools_registry)}"
+            _trace_write({
+                "type": "tool_error",
+                "tool": tc.name,
+                "error": err_msg,
+                "fail_count": tool_fail_counts[tc.name],
+                "unavailable": tool_fail_counts[tc.name] >= _MAX_TOOL_FAILURES,
+            })
+            fr_parts.extend(_error_parts(tc.name, {"error": err_msg}, tool_fail_counts))
+            continue
+
+        try:
+            result: dict = tools_registry[tc.name].run(**tc.args)
+        except Exception as exc:
+            tool_fail_counts[tc.name] = tool_fail_counts.get(tc.name, 0) + 1
+            _trace_write({
+                "type": "tool_error",
+                "tool": tc.name,
+                "error": str(exc),
+                "fail_count": tool_fail_counts[tc.name],
+                "unavailable": tool_fail_counts[tc.name] >= _MAX_TOOL_FAILURES,
+            })
+            fr_parts.extend(_error_parts(tc.name, {"error": str(exc)}, tool_fail_counts))
+            continue
+
+        evidence.extend(result.get("evidence", []))
+        fr_parts.append({"functionResponse": {"name": tc.name, "response": result}})
+
+        # Mechanism 2 trigger check (the hint itself is injected by
+        # rewrite_node, which can mutate this same turn without starting a
+        # new one — see its docstring).
+        if tc.name == "retrieve" and not result.get("relevance_ok", True) and rewrite_count < _MAX_REWRITES:
+            pending_rewrite = True
+
+    messages.append({"role": "user", "parts": fr_parts})
+
     return {
-        "messages": final_data["messages"],
-        "evidence": final_data["evidence"],
-        "grounded": final_data["grounded"],
-        "answer": final_data["text"],
+        "messages": messages,
+        "evidence": evidence,
+        "tool_fail_counts": tool_fail_counts,
+        "turn": state.get("turn", 0) + 1,
+        "pending_tool_calls": None,
+        "pending_rewrite": pending_rewrite,
     }
+
+
+def _tool_route_edge(state: GraphState) -> str:
+    return "rewrite_node" if state.get("pending_rewrite") else "llm_node"
+
+
+def rewrite_node(state: GraphState) -> dict:
+    """Mechanism 2: low-relevance retrieval → rewrite hint (capped at
+    _MAX_REWRITES). Appends the hint to the functionResponse turn tool_node
+    just built by mutating a copy of that message, not by starting a new
+    "user" turn — Gemini's contract requires every functionResponse from one
+    model turn to land in a single following user message, and a second
+    consecutive user-role message would violate that (the exact bug fixed in
+    the legacy loop on 2026-07-10 for parallel tool calls).
+
+    Always falls through to llm_node: the actual re-retrieval is LLM-driven
+    (the model reads the hint and decides the new query itself), so this node
+    cannot "re-search" directly — only llm_node -> tool_node can.
+    """
+    messages = list(state["messages"])
+    rewrite_count = state.get("rewrite_count", 0) + 1
+
+    last = dict(messages[-1])
+    last["parts"] = [*last["parts"], {"text": _REWRITE_HINT}]
+    messages[-1] = last
+
+    _trace_write({"type": "rewrite_hint", "tool": "retrieve", "rewrite_count": rewrite_count})
+
+    return {"messages": messages, "rewrite_count": rewrite_count, "pending_rewrite": False}
+
+
+def groundedness_node(state: GraphState) -> dict:
+    """Mechanism 3: LLM-as-judge citation groundedness check, with one
+    revision pass (capped at _MAX_REVISIONS) if unsupported claims are found.
+    Reached unconditionally for every real final answer (see
+    _llm_route_edge) — this node decides what happens *after* the check runs,
+    never whether it runs at all.
+    """
+    answer = state.get("answer") or ""
+    evidence = state.get("evidence") or []
+    revision_count = state.get("revision_count", 0)
+
+    with _trace_span({"type": "groundedness_check"}) as _t:
+        grounded = _check_groundedness(answer, evidence)
+        _t["supported"] = grounded["supported"]
+        _t["unsupported_count"] = len(grounded["unsupported_sentences"])
+        _t["unsupported_sentences"] = grounded["unsupported_sentences"]
+
+    if grounded["supported"] or revision_count >= _MAX_REVISIONS:
+        return {"grounded": grounded["supported"]}
+
+    messages = list(state["messages"])
+    unsupported_list = "\n".join(f"- {s}" for s in grounded["unsupported_sentences"])
+    revision_msg = _GROUNDEDNESS_REVISION_PREFIX + unsupported_list + _GROUNDEDNESS_REVISION_SUFFIX
+    messages.append({"role": "user", "parts": [{"text": revision_msg}]})
+
+    return {
+        "messages": messages,
+        "revision_count": revision_count + 1,
+        "pending_revision": True,
+    }
+
+
+def _groundedness_route_edge(state: GraphState) -> str:
+    return "llm_node" if state.get("pending_revision") else END
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
@@ -219,17 +431,36 @@ def build_graph():
     graph.add_node("classify", classify_node)
     graph.add_node("direct", direct_node)
     graph.add_node("rag", rag_node)
-    graph.add_node("agent", agent_node)
+    graph.add_node("llm_node", llm_node)
+    graph.add_node("tool_node", tool_node)
+    graph.add_node("rewrite_node", rewrite_node)
+    graph.add_node("groundedness_node", groundedness_node)
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges(
         "classify",
         _route_edge,
-        {"direct": "direct", "rag": "rag", "agent": "agent"},
+        {"direct": "direct", "rag": "rag", "agent": "llm_node"},
     )
     graph.add_edge("direct", END)
     graph.add_edge("rag", END)
-    graph.add_edge("agent", END)
+
+    graph.add_conditional_edges(
+        "llm_node",
+        _llm_route_edge,
+        {"tool_node": "tool_node", "groundedness_node": "groundedness_node", END: END},
+    )
+    graph.add_conditional_edges(
+        "tool_node",
+        _tool_route_edge,
+        {"rewrite_node": "rewrite_node", "llm_node": "llm_node"},
+    )
+    graph.add_edge("rewrite_node", "llm_node")
+    graph.add_conditional_edges(
+        "groundedness_node",
+        _groundedness_route_edge,
+        {"llm_node": "llm_node", END: END},
+    )
 
     return graph.compile()
 
