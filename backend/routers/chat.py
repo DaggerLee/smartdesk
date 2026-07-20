@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import chroma_client
-from agent.graph import run_graph
+from agent.graph import stream_graph
 from agent.loop import SYSTEM_PROMPT, run_agent
 from agent.router import route
 from auth import get_current_user
@@ -132,11 +132,64 @@ def chat_stream(
                     .limit(5)
                     .all()
                 )
-                result = run_graph(body.message, body.kb_id, history=list(reversed(recent_history)))
-                answer = result.get("answer", "")
-                yield f"data: {json.dumps(answer, ensure_ascii=False)}\n\n"
-                db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
-                db.commit()
+                final_state: dict = {}
+                for event in stream_graph(body.message, body.kb_id, history=list(reversed(recent_history))):
+                    if event.type == "tool_call":
+                        name = event.data["name"]
+                        label = "Searching knowledge base…" if name == "retrieve" else "Searching the web…"
+                        yield f"data: {json.dumps({'status': label}, ensure_ascii=False)}\n\n"
+                    elif event.type == "chunk":
+                        yield f"data: {json.dumps(event.data['text'], ensure_ascii=False)}\n\n"
+                    elif event.type == "final":
+                        final_state = event.data
+
+                route_taken = final_state.get("route")
+                answer = final_state.get("answer", "")
+
+                if route_taken == "agent":
+                    # Two-stage finish, same as legacy generate_agent(): re-stream via a
+                    # fresh llm_stream() call over the accumulated messages rather than
+                    # replaying the loop's own (already groundedness-checked) text — see
+                    # agent/graph.py's module docstring for why this discards
+                    # final_state["answer"].
+                    chunks: List[str] = []
+                    final_msgs = final_state.get("messages")
+                    if final_msgs:
+                        for chunk in llm_stream(final_msgs, system=SYSTEM_PROMPT):
+                            chunks.append(chunk)
+                            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    answer = "".join(chunks)
+
+                    # Mirrors generate_agent(): a fresh session, since this closure
+                    # resumes after the endpoint function has already returned.
+                    _db = SessionLocal()
+                    try:
+                        _db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
+                        _db.commit()
+                    finally:
+                        _db.close()
+
+                else:
+                    if route_taken == "rag":
+                        doc_sources = final_state.get("doc_sources") or []
+                        web_results = final_state.get("web_results") or []
+                        all_sources: List[dict] = []
+                        if final_state.get("used_docs") and doc_sources:
+                            all_sources.extend(doc_sources)
+                        if final_state.get("used_web") and web_results:
+                            for r in web_results:
+                                all_sources.append({
+                                    "type": "web",
+                                    "title": r.get("title", "Web result"),
+                                    "url": r.get("url", ""),
+                                    "snippet": r.get("snippet", ""),
+                                })
+                        if all_sources:
+                            yield f"data: {json.dumps({'sources': all_sources}, ensure_ascii=False)}\n\n"
+
+                    db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
+                    db.commit()
+
                 yield "data: [DONE]\n\n"
         return StreamingResponse(generate_langgraph(), media_type="text/event-stream", headers=_sse_headers)
 

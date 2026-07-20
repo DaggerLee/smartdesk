@@ -14,9 +14,40 @@ constants (SYSTEM_PROMPT, _MAX_TOOL_FAILURES, _MAX_REWRITES, hint/notice text)
 are imported from agent.loop — the single source of truth — not copied, so the
 graph and legacy paths can never drift on these values.
 
+W5 T3: stream_graph() is the new streaming entry point — it drives
+_compiled_graph.stream(..., stream_mode=["custom", "values"]) and yields
+GraphEvent objects that routers/chat.py's langgraph branch translates into SSE
+frames, one-to-one with what agent.loop.run_agent()'s AgentEvent stream and
+chat.py's direct/rag chunk loops already produce for the legacy paths:
+  - "tool_call"  — llm_node, one per pending tool call, emitted via
+                   get_stream_writer() at the same point run_agent() yields
+                   AgentEvent(type="tool_call", ...): before the call runs.
+  - "chunk"      — direct_node/rag_node, one per text chunk from
+                   llm_stream()/generate_answer_stream(), emitted live as the
+                   node consumes the underlying stream. Legacy has no
+                   AgentEvent for this because chat.py loops over those
+                   generators itself; the graph unifies all three paths behind
+                   one stream_graph() generator, so this event carries that
+                   inline chunking across the graph boundary.
+  - "final"      — the last "values" snapshot (the completed GraphState).
+                   chat.py uses it to run the same two-stage finish the legacy
+                   agent path uses (re-stream via llm_stream(final_messages) —
+                   see agent/loop.py's run_agent() docstring / chat.py's
+                   generate_agent(), which discards run_agent()'s own
+                   groundedness-checked text and regenerates via a second
+                   streaming call over the same message history; stream_graph()
+                   preserves that exact behavior, not a replay of state["answer"])
+                   and to build the rag path's sources SSE frame from
+                   used_docs/used_web + doc_sources/web_results.
+run_graph() keeps its pre-T3 synchronous contract (returns the final
+GraphState dict) for existing callers — tests/test_graph_self_healing.py
+subscripts the return value directly — by draining stream_graph() and
+discarding the "tool_call"/"chunk" events; both entry points run the exact
+same compiled graph, so there is one execution path, not two.
+
 Fallback: agent/loop.py (run_agent(), unmodified), agent/router.py, and
 routers/chat.py's inline RAG chain remain fully functional on their own and are
-what routers/chat.py calls by default. run_graph() is only reached when
+what routers/chat.py calls by default. The graph is only reached when
 SMARTDESK_AGENT_BACKEND=langgraph is set (see routers/chat.py) — production
 traffic is on the legacy path unless that switch is flipped.
 
@@ -35,8 +66,10 @@ FastAPI/Starlette combo currently fails at import time regardless
 from __future__ import annotations
 
 import re
-from typing import Optional, TypedDict
+from dataclasses import dataclass
+from typing import Generator, Optional, TypedDict
 
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 import chroma_client
@@ -96,6 +129,18 @@ _FORMAT_RE = re.compile(
 )
 
 
+# ── Streaming event type ────────────────────────────────────────────────────
+#
+# Mirrors agent.loop.AgentEvent's role (a typed envelope the SSE layer
+# switches on) but with the type vocabulary stream_graph() actually emits —
+# see the module docstring's event-mapping list.
+
+@dataclass
+class GraphEvent:
+    type: str   # "tool_call" | "chunk" | "final"
+    data: dict
+
+
 def _classify(message: str) -> str:
     m = message.strip()
     if _CONVERSATIONAL_RE.match(m):
@@ -143,6 +188,8 @@ class GraphState(TypedDict, total=False):
     context_texts: list[str]
     doc_sources: list[dict]
     web_results: list[dict]
+    used_docs: bool    # [SOURCE_USED] marker seen in the raw generated text
+    used_web: bool     # [WEB_USED] marker seen in the raw generated text
 
     answer: str
 
@@ -160,16 +207,36 @@ def _route_edge(state: GraphState) -> str:
 
 
 def direct_node(state: GraphState) -> dict:
-    """Mirrors chat.py's direct path: plain streamed reply, no retrieval."""
+    """Mirrors chat.py's direct path: plain streamed reply, no retrieval.
+
+    Forwards each chunk through get_stream_writer() as it arrives (stream_mode
+    "custom") so stream_graph() callers see the same live, one-stage token
+    streaming chat.py's legacy generate_direct() gives the SSE layer — the
+    node doesn't buffer the whole answer before the caller can start reading.
+    """
+    writer = get_stream_writer()
     msgs = [{"role": "user", "parts": [{"text": state["query"]}]}]
-    answer = "".join(llm_stream(msgs))
-    return {"answer": answer}
+    chunks: list[str] = []
+    for chunk in llm_stream(msgs):
+        chunks.append(chunk)
+        writer({"kind": "chunk", "text": chunk})
+    return {"answer": "".join(chunks)}
 
 
 def rag_node(state: GraphState) -> dict:
     """Mirrors chat.py's inline v1 RAG chain (classify -> retrieve -> optional
     web/weather fallback -> generate_answer_stream), calling the same
     underlying functions chat.py calls.
+
+    Streams each raw chunk through get_stream_writer() as it arrives, same as
+    direct_node — one-stage streaming, no graph-side buffering. [SOURCE_USED]/
+    [WEB_USED] marker detection (used_docs/used_web) happens here, on the raw
+    joined text, before stripping — mirroring where chat.py's legacy generate()
+    does the same detection+strip on its own joined chunks. Doing it in the
+    node keeps that business logic where the rest of the RAG chain logic
+    already lives (see module docstring's "known duplication" note); the SSE
+    layer only reads used_docs/used_web + doc_sources/web_results to decide
+    whether to emit a sources frame, it doesn't re-derive them.
     """
     query = state["query"]
     kb_id = state["kb_id"]
@@ -223,9 +290,15 @@ def rag_node(state: GraphState) -> dict:
             else:
                 web_results = web_search(query)
 
-    raw_answer = "".join(
-        generate_answer_stream(query, context_texts, history, web_results or None, msg_type)
-    )
+    writer = get_stream_writer()
+    raw_chunks: list[str] = []
+    for chunk in generate_answer_stream(query, context_texts, history, web_results or None, msg_type):
+        raw_chunks.append(chunk)
+        writer({"kind": "chunk", "text": chunk})
+    raw_answer = "".join(raw_chunks)
+
+    used_docs = "[SOURCE_USED]" in raw_answer
+    used_web = "[WEB_USED]" in raw_answer
     clean_answer = raw_answer.replace("[SOURCE_USED]", "").replace("[WEB_USED]", "").rstrip()
 
     return {
@@ -233,6 +306,8 @@ def rag_node(state: GraphState) -> dict:
         "context_texts": context_texts,
         "doc_sources": doc_sources,
         "web_results": web_results,
+        "used_docs": used_docs,
+        "used_web": used_web,
         "answer": clean_answer,
     }
 
@@ -270,6 +345,16 @@ def llm_node(state: GraphState) -> dict:
     resp = complete(messages, tools=declarations, system=SYSTEM_PROMPT)
 
     if resp.tool_calls:
+        # Emit one "tool_call" custom event per call, before any of them run —
+        # same timing as run_agent()'s yield AgentEvent(type="tool_call", ...),
+        # which happens per-tc before that tc's tool.run(). tool_node executes
+        # the calls in the next graph step; legacy has no SSE-visible
+        # "tool_result" equivalent either (chat.py's generate_agent() only
+        # switches on "tool_call"), so tool_node doesn't need to emit anything.
+        writer = get_stream_writer()
+        for tc in resp.tool_calls:
+            writer({"kind": "tool_call", "name": tc.name, "args": tc.args})
+
         # Echo the model turn verbatim (raw parts keep the thoughtSignature
         # that gemini-3.5+ requires on replayed functionCall history).
         messages.append(model_turn(resp))
@@ -468,12 +553,55 @@ def build_graph():
 _compiled_graph = build_graph()
 
 
+def stream_graph(
+    query: str, kb_id: int, history: Optional[list] = None
+) -> Generator[GraphEvent, None, None]:
+    """Streaming entry point: run the full router -> path graph for one query,
+    yielding GraphEvents as nodes produce them (see module docstring's
+    event-mapping list) instead of blocking until the graph completes.
+
+    stream_mode=["custom", "values"]: "custom" carries the fine-grained
+    tool_call/chunk events nodes push via get_stream_writer() — the graph
+    equivalent of run_agent()'s hand-written `yield AgentEvent(...)` points.
+    "values" carries the full GraphState after every superstep; only the last
+    one (the completed state) is used, as the "final" event. stream_mode
+    "messages" isn't an option here — it taps token events from LangChain
+    BaseChatModel invocations, and no node calls one (all LLM calls go through
+    llm/client.py's plain Gemini REST wrapper, per the single-client-module
+    constraint in CLAUDE.md). "updates" was also considered and rejected: it
+    would hand back each node's partial-state diff separately, requiring the
+    caller to manually re-merge ~7 nodes' worth of diffs to reconstruct what
+    "values" already assembles for free.
+    """
+    initial_state: GraphState = {"query": query, "kb_id": kb_id, "history": history or []}
+    final_state: GraphState = dict(initial_state)  # type: ignore[assignment]
+
+    for mode, chunk in _compiled_graph.stream(initial_state, stream_mode=["custom", "values"]):
+        if mode == "custom":
+            kind = chunk["kind"]
+            yield GraphEvent(type=kind, data={k: v for k, v in chunk.items() if k != "kind"})
+        else:  # mode == "values"
+            final_state.update(chunk)
+
+    yield GraphEvent(type="final", data=final_state)
+
+
 def run_graph(query: str, kb_id: int, history: Optional[list] = None) -> GraphState:
-    """Alternate entry point: run the full router -> path graph for one query.
+    """Alternate entry point: run the full router -> path graph for one query,
+    blocking until it completes.
 
     Returns the final GraphState (includes "route" and "answer" plus whatever
     fields the chosen path populated). route()/run_agent()/chat.py's RAG chain
     remain the fallback — nothing here deletes or alters them.
+
+    Implemented on top of stream_graph() (draining it and keeping only the
+    "final" event) rather than a separate _compiled_graph.invoke() call, so
+    there is exactly one graph-execution code path behind both entry points —
+    kept for existing callers (tests/test_graph_self_healing.py) that expect a
+    synchronous dict return rather than a generator.
     """
-    initial_state: GraphState = {"query": query, "kb_id": kb_id, "history": history or []}
-    return _compiled_graph.invoke(initial_state)
+    final_state: GraphState = {}
+    for event in stream_graph(query, kb_id, history=history):
+        if event.type == "final":
+            final_state = event.data  # type: ignore[assignment]
+    return final_state
