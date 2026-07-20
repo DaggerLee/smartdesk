@@ -125,6 +125,16 @@ def chat_stream(
     if os.getenv("SMARTDESK_AGENT_BACKEND") == "langgraph":
         def generate_langgraph() -> Generator[str, None, None]:
             with _trace_context(request_id=request_id):
+                # W5 T4: generated and held at the call site (not left to
+                # stream_graph()'s auto-generate fallback) so a crashed run's
+                # thread_id is recoverable from logs for a manual
+                # agent.graph.resume_graph(thread_id) call — the actual
+                # foundation this task lays for HITL resume. Deliberately not
+                # request_id: their lifetimes diverge (a future resume
+                # request gets its own fresh request_id but must reuse this
+                # thread_id) — see agent/graph.py's module docstring.
+                thread_id = uuid.uuid4().hex
+                print(f"[Chat] LangGraph thread_id={thread_id}")
                 recent_history = (
                     db.query(Conversation)
                     .filter(Conversation.kb_id == body.kb_id)
@@ -133,7 +143,9 @@ def chat_stream(
                     .all()
                 )
                 final_state: dict = {}
-                for event in stream_graph(body.message, body.kb_id, history=list(reversed(recent_history))):
+                for event in stream_graph(
+                    body.message, body.kb_id, history=list(reversed(recent_history)), thread_id=thread_id
+                ):
                     if event.type == "tool_call":
                         name = event.data["name"]
                         label = "Searching knowledge base…" if name == "retrieve" else "Searching the web…"

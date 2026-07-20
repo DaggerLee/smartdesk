@@ -22,3 +22,10 @@ GEMINI_MODEL: str = "models/gemini-3.5-flash"
 
 # ── Tracing ───────────────────────────────────────────────────────────────────
 TRACE_LOG_PATH: str = os.getenv("TRACE_LOG_PATH", "logs/traces/traces.jsonl")
+
+# ── Checkpointing (W5 T4) ───────────────────────────────────────────────────────
+# LangGraph checkpoint store — a separate sqlite file from the business DB
+# (database.py's smartdesk.db), so per-turn agent execution state never shares
+# a schema or a lock with KB/conversation/user records. Env override lets
+# tests point this at an isolated file instead of data/ (see tests/conftest.py).
+CHECKPOINT_DB_PATH: str = os.getenv("CHECKPOINT_DB_PATH", "data/checkpoints.sqlite")

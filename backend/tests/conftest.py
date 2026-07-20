@@ -5,6 +5,20 @@ mock_llm_tool  — complete() returns a functionCall LLMResponse (retrieve)
 mock_llm_seq   — complete() returns a configurable sequence of responses
 """
 
+import os
+import tempfile
+
+# W5 T4: agent/graph.py builds a module-level SqliteSaver-backed compiled
+# graph at import time, reading config.CHECKPOINT_DB_PATH. Must be set before
+# any test module (or this conftest's own later imports) triggers that import,
+# so the test suite writes checkpoints to an isolated scratch file instead of
+# the production data/checkpoints.sqlite. Mirrors the existing TRACE_LOG_PATH
+# env-override pattern (config.py).
+os.environ.setdefault(
+    "CHECKPOINT_DB_PATH",
+    os.path.join(tempfile.gettempdir(), "smartdesk_test_checkpoints.sqlite"),
+)
+
 from unittest.mock import MagicMock, patch
 
 import pytest

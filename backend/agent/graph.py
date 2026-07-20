@@ -61,14 +61,63 @@ into the router layer would pull FastAPI/SQLAlchemy/auth into the agent
 layer's import graph merely for a regex helper, and this environment's
 FastAPI/Starlette combo currently fails at import time regardless
 (unrelated pre-existing version mismatch, not part of this migration).
+
+W5 T4: build_graph() now compiles with a checkpointer (SqliteSaver on
+data/checkpoints.sqlite by default, injectable for tests) — the foundation
+for HITL interrupt/resume. LangGraph checkpoints once per completed
+superstep, not per node statement: a crash mid-node loses only that node's
+in-flight work, and resume (_compiled_graph.stream(None, config)) re-executes
+exactly the superstep that never committed, not anything before it. Every
+.stream() call here passes durability="sync" explicitly — the default
+("async") only guarantees the checkpoint is written before the *run*
+finishes, not before the *next superstep* starts, which would undermine the
+"already-committed supersteps never replay" guarantee this module's
+idempotency reasoning (and resume_graph(), below) depends on.
+
+thread_id is scoped one-per-turn (one query = one graph run = eventually one
+Conversation row), not to kb_id or a user session: GraphState fields like
+messages/evidence/turn/tool_fail_counts have no reducer (default overwrite),
+and stream_graph()'s initial_state only sets query/kb_id/history. Reusing a
+thread_id across turns would let a prior turn's leftover messages/turn/
+evidence survive in the checkpoint and bleed into the next turn's initial
+state (nothing overwrites those keys), corrupting turn counting and mixing
+unrelated evidence. The existing multi-turn memory (history, loaded from the
+Conversation table) already doesn't depend on graph-internal state surviving
+across turns, so per-turn thread_id costs nothing. stream_graph()/run_graph()
+accept an optional thread_id and auto-generate one (uuid4) when omitted, so
+every existing caller is unaffected. Conversation gets no new column in this
+task — no acceptance criterion exercises a persisted thread_id<->Conversation
+mapping, and HITL (which would actually consume it) is separate future work;
+adding it now would be speculative structure.
+
+tool_node's per-tool-call trace_write() calls (mechanism 1's error logging)
+were inline inside its for-loop; batched instead (see tool_node) — a crash
+partway through the loop used to leave already-logged trace entries on disk
+while the node's own checkpoint never committed, so resume re-ran the whole
+loop and re-logged them, double-counting errors for W4-style error analysis.
+Deferring every trace_write() to one point right before return means a
+partial run persists nothing (nothing survives an interruption to duplicate)
+and a completed run persists each event at most once — a crash in the
+narrow window between the flush loop and the node's own checkpoint commit
+is still possible in principle (the same residual race every other node's
+single trace/span write already carries, see rewrite_node/groundedness_node
+below), but the wide, easy-to-hit window (partway through the tool-call loop
+itself) is what actually mattered here and is fully closed. Chosen over
+giving trace entries a dedupable id because it fixes the duplication at the
+source instead of pushing a reconciliation step onto every downstream trace
+reader.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import sqlite3
+import uuid
 from dataclasses import dataclass
 from typing import Generator, Optional, TypedDict
 
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
@@ -87,7 +136,7 @@ from agent.loop import (
 from agent.router import route
 from agent.tools.retrieve import RetrieveTool
 from agent.tools.web_search import WebSearchTool
-from config import MAX_AGENT_TURNS
+from config import CHECKPOINT_DB_PATH, MAX_AGENT_TURNS
 from gemini_client import generate_answer_stream
 from llm.client import complete, model_turn, stream as llm_stream
 from llm.trace import span as _trace_span, write as _trace_write
@@ -385,6 +434,19 @@ def tool_node(state: GraphState) -> dict:
     an error functionResponse instead of raising, so the graph routes back to
     llm_node rather than aborting; after _MAX_TOOL_FAILURES an unavailability
     notice is injected too.
+
+    W5 T4 idempotency fix: trace_write() calls are collected in trace_events
+    and flushed in one batch right before return, instead of firing inline
+    per tool call inside the loop below. Checkpointing commits once per
+    completed superstep — if the process is interrupted partway through this
+    loop, this node's own checkpoint never commits and resume re-runs the
+    whole loop from scratch. Inline writes would have already persisted for
+    tool calls processed before the interruption, so the re-run would persist
+    them a second time (double-counting tool errors for W4-style error
+    analysis). Batching to one point means a partial run persists nothing
+    (nothing survives the interruption to duplicate) and a completed run
+    persists each event at most once — the event *content* is unchanged,
+    only the timing of the side effect moves.
     """
     messages = list(state["messages"])
     evidence = list(state.get("evidence") or [])
@@ -394,12 +456,13 @@ def tool_node(state: GraphState) -> dict:
     tools_registry = _build_tools_registry(state["kb_id"])
     pending_rewrite = False
     fr_parts: list[dict] = []
+    trace_events: list[dict] = []
 
     for tc in state.get("pending_tool_calls") or []:
         if tc.name not in tools_registry:
             tool_fail_counts[tc.name] = tool_fail_counts.get(tc.name, 0) + 1
             err_msg = f"Unknown tool: {tc.name!r}. Available: {list(tools_registry)}"
-            _trace_write({
+            trace_events.append({
                 "type": "tool_error",
                 "tool": tc.name,
                 "error": err_msg,
@@ -413,7 +476,7 @@ def tool_node(state: GraphState) -> dict:
             result: dict = tools_registry[tc.name].run(**tc.args)
         except Exception as exc:
             tool_fail_counts[tc.name] = tool_fail_counts.get(tc.name, 0) + 1
-            _trace_write({
+            trace_events.append({
                 "type": "tool_error",
                 "tool": tc.name,
                 "error": str(exc),
@@ -433,6 +496,8 @@ def tool_node(state: GraphState) -> dict:
             pending_rewrite = True
 
     messages.append({"role": "user", "parts": fr_parts})
+    for event in trace_events:
+        _trace_write(event)
 
     return {
         "messages": messages,
@@ -511,7 +576,22 @@ def _groundedness_route_edge(state: GraphState) -> str:
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
-def build_graph():
+def _default_checkpointer() -> SqliteSaver:
+    """Production checkpointer: a real sqlite file under data/, separate from
+    the business DB (database.py's smartdesk.db). Tests build their own graph
+    via build_graph(checkpointer=...) instead of touching this file — see
+    tests/conftest.py, which also redirects CHECKPOINT_DB_PATH itself so the
+    module-level singleton below never writes into the production file
+    during a test run.
+    """
+    checkpoint_dir = os.path.dirname(CHECKPOINT_DB_PATH)
+    if checkpoint_dir:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+    conn = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=False)
+    return SqliteSaver(conn)
+
+
+def build_graph(checkpointer=None):
     graph = StateGraph(GraphState)
     graph.add_node("classify", classify_node)
     graph.add_node("direct", direct_node)
@@ -547,14 +627,17 @@ def build_graph():
         {"llm_node": "llm_node", END: END},
     )
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer or _default_checkpointer())
 
 
 _compiled_graph = build_graph()
 
 
 def stream_graph(
-    query: str, kb_id: int, history: Optional[list] = None
+    query: str,
+    kb_id: int,
+    history: Optional[list] = None,
+    thread_id: Optional[str] = None,
 ) -> Generator[GraphEvent, None, None]:
     """Streaming entry point: run the full router -> path graph for one query,
     yielding GraphEvents as nodes produce them (see module docstring's
@@ -572,11 +655,23 @@ def stream_graph(
     would hand back each node's partial-state diff separately, requiring the
     caller to manually re-merge ~7 nodes' worth of diffs to reconstruct what
     "values" already assembles for free.
+
+    thread_id: one graph run = one thread (see module docstring's "thread_id
+    is scoped one-per-turn" note). Auto-generated when omitted so every
+    existing caller is unaffected; callers that need to resume a specific run
+    later (resume_graph()) must generate and hold onto their own id instead of
+    relying on the default. durability="sync" makes every checkpoint durable
+    before the next superstep starts — required for the "already-committed
+    supersteps never replay" guarantee the idempotency audit depends on (see
+    module docstring).
     """
+    config = {"configurable": {"thread_id": thread_id or uuid.uuid4().hex}}
     initial_state: GraphState = {"query": query, "kb_id": kb_id, "history": history or []}
     final_state: GraphState = dict(initial_state)  # type: ignore[assignment]
 
-    for mode, chunk in _compiled_graph.stream(initial_state, stream_mode=["custom", "values"]):
+    for mode, chunk in _compiled_graph.stream(
+        initial_state, config=config, stream_mode=["custom", "values"], durability="sync"
+    ):
         if mode == "custom":
             kind = chunk["kind"]
             yield GraphEvent(type=kind, data={k: v for k, v in chunk.items() if k != "kind"})
@@ -586,7 +681,12 @@ def stream_graph(
     yield GraphEvent(type="final", data=final_state)
 
 
-def run_graph(query: str, kb_id: int, history: Optional[list] = None) -> GraphState:
+def run_graph(
+    query: str,
+    kb_id: int,
+    history: Optional[list] = None,
+    thread_id: Optional[str] = None,
+) -> GraphState:
     """Alternate entry point: run the full router -> path graph for one query,
     blocking until it completes.
 
@@ -601,7 +701,30 @@ def run_graph(query: str, kb_id: int, history: Optional[list] = None) -> GraphSt
     synchronous dict return rather than a generator.
     """
     final_state: GraphState = {}
-    for event in stream_graph(query, kb_id, history=history):
+    for event in stream_graph(query, kb_id, history=history, thread_id=thread_id):
         if event.type == "final":
             final_state = event.data  # type: ignore[assignment]
+    return final_state
+
+
+def resume_graph(thread_id: str) -> GraphState:
+    """Resume a graph run that was interrupted (crash, or — the point of this
+    task — a future HITL pause) before it reached END, continuing from its
+    last committed checkpoint rather than restarting from classify_node.
+
+    Passing None as input is LangGraph's own signal to continue a thread's
+    pending tasks instead of starting a fresh run (see
+    langgraph.pregel._loop.Loop._first(): "None input: resume after
+    interrupt"). Only the superstep that never committed re-executes; every
+    already-committed superstep (and its side effects) is not replayed — see
+    the module docstring's per-node idempotency audit for which nodes that is
+    safe for. Not layered on stream_graph()/run_graph() (unlike run_graph on
+    stream_graph) because there is no live SSE caller to feed "custom" events
+    to during a resume in this task's scope — chat.py isn't wired to call
+    this yet; that wiring is future HITL-endpoint work.
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    final_state: GraphState = {}
+    for chunk in _compiled_graph.stream(None, config=config, stream_mode="values", durability="sync"):
+        final_state = chunk  # type: ignore[assignment]
     return final_state
