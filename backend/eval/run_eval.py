@@ -67,6 +67,28 @@ else:
 os.environ.setdefault("LLM_MIN_INTERVAL_S", "6")
 print(f"[run_eval] LLM_MIN_INTERVAL_S={os.environ['LLM_MIN_INTERVAL_S']}")
 
+# W5 T5: agent-path backend switch for the LangGraph migration regression.
+# Router (_router_route) and RAG (_run_rag) call the exact same code on both
+# backends — the router because agent/graph.py's classify_node calls the
+# identical agent.router.route(); the RAG path because _run_rag() below is
+# already a harness-only simplified reimplementation that never called either
+# chat.py's inline chain or agent/graph.py's rag_node to begin with. Only the
+# agent path (_run_agent_path) was actually rewritten by the migration
+# (agent.loop.run_agent() -> agent.graph's llm_node/tool_node/rewrite_node/
+# groundedness_node), so it's the only branch that swaps implementation.
+_AGENT_BACKEND = os.getenv("SMARTDESK_AGENT_BACKEND", "legacy")
+if _AGENT_BACKEND == "langgraph":
+    # Isolate graph checkpoints from the production data/checkpoints.sqlite:
+    # every agent-expected item gets a fresh throwaway thread_id, and this eval
+    # run would otherwise permanently write dozens of scratch threads into the
+    # real checkpoint db. Must be set before the first `import config` —
+    # config.CHECKPOINT_DB_PATH reads the env var at import time, same pattern
+    # as GEMINI_API_KEY above.
+    os.environ.setdefault(
+        "CHECKPOINT_DB_PATH", str(Path(__file__).parent / "results" / "checkpoints_eval.sqlite")
+    )
+    print("[run_eval] SMARTDESK_AGENT_BACKEND=langgraph — agent path routed through agent.graph.run_graph()")
+
 import config
 from agent.groundedness import check as _groundedness_check
 from llm.trace import context as _trace_context
@@ -74,6 +96,16 @@ from agent.loop import run_agent
 from agent.router import route as _router_route
 from agent.tools.retrieve import RetrieveTool
 from llm.client import complete
+
+if _AGENT_BACKEND == "langgraph":
+    from agent.graph import run_graph as _run_graph
+
+# Diagnostic-only counter for the harness-level route re-check inside
+# _run_agent_path_graph (see its docstring) — never read by aggregate() or
+# written into any scored metric, reported separately so a rare non-
+# deterministic router disagreement is visible instead of silently
+# misscoring an item.
+_ROUTE_MISMATCH_LOG: list[dict] = []
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -252,6 +284,9 @@ def _run_rag(query: str, chunks: list[str]) -> str:
 
 
 def _run_agent_path(query: str, kb_id: int) -> tuple[str, list[str], Optional[bool]]:
+    if _AGENT_BACKEND == "langgraph":
+        return _run_agent_path_graph(query, kb_id)
+
     events = list(run_agent(query, kb_id=kb_id))
     answer = ""
     grounded: Optional[bool] = None
@@ -261,6 +296,46 @@ def _run_agent_path(query: str, kb_id: int) -> tuple[str, list[str], Optional[bo
             answer = ev.data.get("text", "") or ""
             grounded = ev.data.get("grounded")
             evidence = ev.data.get("evidence", [])
+    chunks = [e["text"] for e in evidence if isinstance(e, dict) and "text" in e]
+    return answer, chunks, grounded
+
+
+def _run_agent_path_graph(query: str, kb_id: int) -> tuple[str, list[str], Optional[bool]]:
+    """LangGraph-backend equivalent of _run_agent_path(), used only when
+    SMARTDESK_AGENT_BACKEND=langgraph (W5 T5 migration regression). Calls
+    agent.graph.run_graph() — the same entry point
+    tests/test_graph_self_healing.py already exercises — instead of
+    agent.loop.run_agent(); the (answer, chunks, grounded) return shape is
+    unchanged, so every caller and every metric downstream is unaffected.
+
+    run_graph() re-enters the graph at classify_node, which calls the same
+    agent.router.route() the harness already called (in _eval_item) to decide
+    dispatch here — unlike run_agent(), which assumes routing already
+    happened and never re-routes. Both calls hit route() at temperature=0, so
+    they should agree, but that's not a hard guarantee. Raising instead of
+    trusting final_state blindly keeps a rare non-deterministic router blip
+    from being silently misscored as an agent-path regression: the item
+    becomes an error (excluded from scoring, re-run on resume, same treatment
+    the harness already gives an empty_answer) and the mismatch is recorded
+    in _ROUTE_MISMATCH_LOG for the run's final report.
+    """
+    final_state = _run_graph(query, kb_id=kb_id)
+    internal_route = final_state.get("route")
+    if internal_route != "agent":
+        _ROUTE_MISMATCH_LOG.append({
+            "query": query,
+            "kb_id": kb_id,
+            "harness_route": "agent",
+            "graph_internal_route": internal_route,
+        })
+        raise RuntimeError(
+            f"graph_route_mismatch: harness dispatched as agent but graph's "
+            f"internal classify_node routed to {internal_route!r}"
+        )
+
+    answer = final_state.get("answer", "") or ""
+    grounded = final_state.get("grounded")
+    evidence = final_state.get("evidence") or []
     chunks = [e["text"] for e in evidence if isinstance(e, dict) and "text" in e]
     return answer, chunks, grounded
 
@@ -539,8 +614,11 @@ def append_history(agg: dict, n_items: int, limit: Optional[int], git_dirty: boo
         "gold_set_items": n_items,
         "limit": limit,
         "eval_key_used": bool(_eval_key),
+        "agent_backend": _AGENT_BACKEND,
         **agg,
     }
+    if _AGENT_BACKEND == "langgraph":
+        record["route_mismatch_count"] = len(_ROUTE_MISMATCH_LOG)
     if git_dirty:
         record["git_dirty"] = True
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -621,6 +699,12 @@ def _run(args: argparse.Namespace, git_dirty: bool) -> None:
 
     agg = aggregate(results)
     print_report(agg, results)
+
+    if _AGENT_BACKEND == "langgraph":
+        print(f"\n[route_mismatch_check] triggered {len(_ROUTE_MISMATCH_LOG)} time(s)")
+        for m in _ROUTE_MISMATCH_LOG:
+            print(f"    query={m['query']!r} harness_route={m['harness_route']} "
+                  f"graph_internal_route={m['graph_internal_route']!r}")
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
