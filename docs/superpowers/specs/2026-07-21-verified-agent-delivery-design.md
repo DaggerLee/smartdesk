@@ -43,7 +43,7 @@ This improves perceived latency but requires a new frontend protocol and lets us
 |---|---|---|
 | `verified` | Evidence existed; the judge completed and accepted the final or revised answer. | Deliver the graph answer. |
 | `not_applicable` | No evidence existed, so groundedness was not evaluated. | Deliver the graph answer, but trace it as not applicable rather than verified. |
-| `unchecked_max_turns` | The safety cap produced a wrap-up answer and skipped the judge. | Deliver the non-retry notice. |
+| `unchecked_max_turns` | The safety cap produced a wrap-up answer and skipped the judge. | Deliver the retryable notice. |
 | `check_error` | Judge execution or result parsing failed. | Deliver the retryable notice. |
 | `rejected` | Unsupported content remained after the permitted revision. | Deliver the non-retry notice. |
 
@@ -53,13 +53,13 @@ A new focused module owns the status vocabulary, allowed statuses, notice consta
 
 ```text
 RETRYABLE_VERIFICATION_NOTICE =
-  "I couldn't verify this answer because the verification check failed. Please try again."
+  "I couldn't complete a verifiable answer this time. Please try again."
 
 UNSUPPORTED_ANSWER_NOTICE =
   "I couldn't provide an answer that was sufficiently supported by the available evidence."
 ```
 
-`check_error` uses the retryable notice. `rejected`, `unchecked_max_turns`, missing status, and unknown status use the non-retry notice. The second message does not promise that repeating the same request will help.
+`check_error` and `unchecked_max_turns` use the retryable notice: both are incomplete execution outcomes where another run may succeed, although success is not promised. `rejected`, missing status, and unknown status use the non-retry notice. The second message does not imply that repeating the same request will help.
 
 Both notices are deterministic system messages, not model answers. They are committed and then emitted so history contains exactly what a successfully connected user receives.
 
@@ -71,7 +71,7 @@ Both notices are deterministic system messages, not model answers. They are comm
 4. With `SMARTDESK_VERIFIED_AGENT_DELIVERY` disabled, the existing two-stage generation and delivery remain unchanged for a controlled comparison. Verification status is still calculated and observed.
 5. With the flag enabled, the shared policy selects one canonical payload:
    - `verified` or `not_applicable`: `final_state["answer"]`;
-   - `check_error`: the retryable notice;
+   - `check_error` or `unchecked_max_turns`: the retryable notice;
    - all other, missing, or unknown statuses: the non-retry notice.
 6. The route opens its delivery database session, persists the canonical payload, and commits.
 7. Only after a successful commit, the route emits the canonical payload as one SSE string frame and then emits `[DONE]`. It makes no post-graph `llm_stream` call.
@@ -85,7 +85,7 @@ The verification status is graph state, not a `Conversation` column, so a later 
 
 Every query that constructs multi-turn history excludes rows whose `Conversation.answer` exactly matches a value in `NON_CONTEXT_ANSWERS` before ordering and applying `limit(5)`. The notices remain visible in user history, but they are not fed back as prior assistant content and do not displace one of the five usable turns.
 
-This exact-string filter is intentionally narrow. A future user-visible delivery-status feature should replace it with an explicit database column and migration.
+This exact-string filter is intentionally narrow. Once a notice is released, its literal is frozen. If user-facing wording must change, the old literal remains in the append-only `NON_CONTEXT_ANSWERS` set and the new literal is added; old entries are never edited or removed. A future user-visible delivery-status feature should replace this mechanism with an explicit database column and migration.
 
 ## Feature flag and compatibility
 
@@ -168,8 +168,8 @@ Tests are written first and must fail for the expected missing behavior before p
 - No answer SSE frame is emitted before its identical payload is committed.
 - For every completed enabled-path request, reconstructed SSE text equals the stored `Conversation.answer` exactly.
 - `verified` and `not_applicable` deliver the graph answer.
-- `check_error` delivers the shared retryable notice.
-- `unchecked_max_turns`, `rejected`, missing status, and unknown status deliver the shared non-retry notice.
+- `check_error` and `unchecked_max_turns` deliver the shared retryable notice.
+- `rejected`, missing status, and unknown status deliver the shared non-retry notice.
 - Both notices remain visible in history but are excluded from future model context.
 - Revision output is checked again before it can receive `verified`.
 - Raw blocked answers remain recoverable through local checkpoint state linked by `thread_id`, and runtime checkpoint paths are ignored by git.
@@ -181,6 +181,8 @@ Tests are written first and must fail for the expected missing behavior before p
 
 Keep the flag off by default. First collect status distribution and baseline call/latency data with the flag off. Run the focused test suite, then the same committed gold set with the flag off and on. Adopt the enabled path only if emitted-without-persistence remains zero, graph-answer delivery mismatch falls to zero for allowed statuses, the extra generation disappears, regressions remain absent, and the notice rate is acceptable to the human owner.
 
+The real-request smoke comparison is exactly five requests: one query run once with the flag off and once with it on, plus three distinct queries run only with the flag on. The off/on latency comparison is therefore **`n=1 paired`**. It is recorded as a single-sample indicative value, not a statistical conclusion. The post-graph generation-call change from one to zero is deterministic instrumentation evidence and is reported separately from latency.
+
 ## Change control
 
 This design is evidence-controlled, not immutable.
@@ -189,3 +191,4 @@ This design is evidence-controlled, not immutable.
 - Clarifications that do not change user-visible behavior, risk tolerance, goals, or evaluation criteria may be corrected immediately with the reason recorded.
 - Changes to delivery policy, privacy, rollout gates, goals, or evaluation criteria require human approval.
 - Post-run defects and measurements are recorded in CASE-002 before superseding any decision. Historical decisions remain visible and are marked as superseded rather than silently rewritten.
+- Governance changes (`AGENTS.md`, project naming, and operating rules) use commits separate from feature implementation so a feature rollback does not revert governance with it.
