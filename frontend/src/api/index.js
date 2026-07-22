@@ -94,7 +94,16 @@ export function uploadFile(kbId, file, onProgress) {
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
-export async function sendMessageStream(kbId, message, onChunk, onSources, onDone, onStatus) {
+export async function sendMessageStream(
+  kbId,
+  message,
+  onChunk,
+  onSources,
+  onDone,
+  onStatus,
+  onPaused,
+  onFailed,
+) {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     headers: {
@@ -131,6 +140,14 @@ export async function sendMessageStream(kbId, message, onChunk, onSources, onDon
       const data = line.slice(6).trim();
       if (data === "[DONE]") {
         onDone?.();
+        return;
+      }
+      if (data === "[PAUSED]") {
+        onPaused?.();
+        return;
+      }
+      if (data === "[FAILED]") {
+        onFailed?.();
         return;
       }
       try {
