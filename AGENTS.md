@@ -45,6 +45,25 @@ Full source: `docs-local/reference-AGENTS.md` (gitignored, not committed).
 - Keep governance and naming changes in commits separate from feature implementation so they can be reverted independently.
 - Do not stage or rewrite unrelated user-owned changes or eval outputs.
 
+### Evaluation discipline
+
+- Before any real-model eval starts, preregister the prediction, acceptance criteria, and failure definition. Do not reinterpret the target after seeing the output.
+- For stochastic real-model evals, headline results use the mean of three runs. Preserve single-run results, but do not explain a swing of roughly two cases unless it repeats or falls outside the registered noise band. Deterministic tests need only one clean pass.
+- Gold labels and expected behavior come from the accepted spec, never from the system output. Changing a label to match an observed answer is invalid.
+- Humans own disputed judge calls, label changes, and rollout decisions. Agents collect evidence and state uncertainty; they do not silently overrule the human-defined rubric.
+- Formal evals require a clean tracked worktree and an identifying commit. Untracked result artifacts may remain, but never bypass the dirty-tree guard for tracked code.
+
+### Change, recovery, and data discipline
+
+- Preserve all existing behavior outside the accepted task scope. Use a minimal diff and do not perform drive-by refactors or remove fallback branches during cleanup.
+- When the working state can no longer be explained reliably, or successive repairs create new failures, return to the last verified checkpoint, start a clean session, and restate the task more precisely. Do not stack speculative patches on an unverified state.
+- Before a material data task, confirm four facts: where the data is, how it will be processed, the expected item count, and how the output will be used.
+
+### Credentials and live integrations
+
+- Redact credentials and sensitive tokens at every persistence or output boundary, including logs, traces, exceptions exposed to clients, and agent messages. Logging an environment-variable name is acceptable; logging its value is not.
+- Model or critical dependency migrations require a real-API smoke test because mocks cannot expose protocol failures such as missing `thoughtSignature` metadata. Notify the user before any test that may consume paid API quota, state the planned scope, and record actual cost as unknown when it cannot be measured.
+
 ### Verified-delivery invariants
 
 - The normal success path must preserve `finalized == delivered == persisted`.
