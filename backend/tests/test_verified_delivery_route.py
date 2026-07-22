@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from agent.delivery import (
     RETRYABLE_VERIFICATION_NOTICE,
@@ -231,3 +233,45 @@ def test_real_zero_tool_graph_flag_on_delivers_checked_answer_without_regenerati
     assert delivery_db.conversation.answer == "Direct agent answer."
     assert traces[0]["verification_status"] == "not_applicable"
     assert traces[0]["post_graph_generation_calls"] == 0
+
+
+def test_real_streaming_response_finishes_without_cross_context_trace_error(tmp_path):
+    events = []
+    delivery_db = _DeliveryDB(events)
+    body = chat.ChatRequest(kb_id=1, message="question")
+    graph_events = [
+        GraphEvent(type="tool_call", data={"name": "retrieve", "args": {}}),
+        GraphEvent(type="final", data=_agent_state("verified")),
+    ]
+    trace_path = tmp_path / "traces.jsonl"
+    app = FastAPI()
+
+    @app.get("/stream")
+    def stream():
+        return chat.chat_stream(
+            body,
+            db=_RequestDB(),
+            current_user=SimpleNamespace(id=7),
+        )
+
+    with patch.dict(
+        "os.environ",
+        {
+            "SMARTDESK_AGENT_BACKEND": "langgraph",
+            "SMARTDESK_VERIFIED_AGENT_DELIVERY": "1",
+        },
+        clear=False,
+    ), patch("routers.chat._owned_kb"), \
+         patch("routers.chat.stream_graph", return_value=iter(graph_events)), \
+         patch("routers.chat.SessionLocal", return_value=delivery_db), \
+         patch("llm.trace._log_path", trace_path):
+        response = TestClient(app).get("/stream")
+
+    assert response.status_code == 200
+    assert response.text.endswith("data: [DONE]\n\n")
+    delivery_trace = next(
+        json.loads(line)
+        for line in trace_path.read_text().splitlines()
+        if '"agent_delivery"' in line
+    )
+    assert delivery_trace["request_id"]

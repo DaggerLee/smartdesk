@@ -23,7 +23,11 @@ from auth import get_current_user
 from database import SessionLocal, get_db
 from gemini_client import generate_answer_stream
 from llm.client import stream as llm_stream
-from llm.trace import context as _trace_context, write as _trace_write
+from llm.trace import (
+    context as _trace_context,
+    iterate_with_context as _trace_iter,
+    write as _trace_write,
+)
 from models import Conversation, KnowledgeBase, User
 from tools import assess_rag_quality, fetch_weather, is_weather_query, web_search
 
@@ -243,7 +247,11 @@ def chat_stream(
                     db.commit()
 
                 yield "data: [DONE]\n\n"
-        return StreamingResponse(generate_langgraph(), media_type="text/event-stream", headers=_sse_headers)
+        return StreamingResponse(
+            _trace_iter(generate_langgraph(), request_id=request_id),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     with _trace_context(request_id=request_id):
         path = route(body.message)
@@ -262,7 +270,11 @@ def chat_stream(
                 db.add(conv)
                 db.commit()
                 yield "data: [DONE]\n\n"
-        return StreamingResponse(generate_direct(), media_type="text/event-stream", headers=_sse_headers)
+        return StreamingResponse(
+            _trace_iter(generate_direct(), request_id=request_id),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     # ── agent: multi-turn tool loop ───────────────────────────────────────────
     if path == "agent":
@@ -292,7 +304,11 @@ def chat_stream(
                 finally:
                     _db.close()
                 yield "data: [DONE]\n\n"
-        return StreamingResponse(generate_agent(), media_type="text/event-stream", headers=_sse_headers)
+        return StreamingResponse(
+            _trace_iter(generate_agent(), request_id=request_id),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     # ── rag: v1 existing chain (unchanged) ───────────────────────────────────
     # Fetch the last 5 conversations for memory context (oldest first)
@@ -393,7 +409,11 @@ def chat_stream(
             db.commit()
             yield "data: [DONE]\n\n"
 
-    return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers)
+    return StreamingResponse(
+        _trace_iter(generate(), request_id=request_id),
+        media_type="text/event-stream",
+        headers=_sse_headers,
+    )
 
 
 @router.get("/history/{kb_id}", response_model=List[HistoryItem])

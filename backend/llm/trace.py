@@ -10,6 +10,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable, Iterator, TypeVar
 
 import config
 
@@ -18,21 +19,45 @@ _log_path = Path(config.TRACE_LOG_PATH)
 # Correlates every trace line written during a unit of work (one eval item,
 # one chat request) without threading an id through every function signature
 # in the call chain (router/complete/retrieve/groundedness/...). Captured
-# per-generator/coroutine by Python's contextvars, so it survives across
-# `yield` in SSE generator functions as long as the generator object is
-# created while the context is active.
+# per coroutine and thread execution context. Synchronous SSE generators must
+# use iterate_with_context() because Starlette may advance successive chunks
+# in different worker contexts.
 _context: contextvars.ContextVar[dict] = contextvars.ContextVar("_trace_context", default={})
+_T = TypeVar("_T")
 
 
 @contextmanager
 def context(**fields):
     """Merge fields (e.g. item_id, request_id) into every trace entry written
     inside this block, including from nested calls."""
+    current = _context.get()
+    if all(key in current and current[key] == value for key, value in fields.items()):
+        yield
+        return
     token = _context.set({**_context.get(), **fields})
     try:
         yield
     finally:
         _context.reset(token)
+
+
+def iterate_with_context(iterable: Iterable[_T], **fields) -> Iterator[_T]:
+    """Advance each synchronous iterator step inside a fresh trace context.
+
+    Starlette may advance successive SSE chunks in different worker contexts.
+    The context is therefore reset before yielding each produced item instead
+    of spanning the iterator's own ``yield`` boundary.
+    """
+    iterator = iter(iterable)
+    while True:
+        token = _context.set({**_context.get(), **fields})
+        try:
+            item = next(iterator)
+        except StopIteration:
+            return
+        finally:
+            _context.reset(token)
+        yield item
 
 
 def write(entry: dict) -> None:
