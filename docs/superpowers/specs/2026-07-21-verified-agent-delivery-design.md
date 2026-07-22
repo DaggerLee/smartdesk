@@ -6,9 +6,13 @@ The LangGraph agent currently checks `state["answer"]` for groundedness, but the
 
 The current checker also has distinct outcomes that are collapsed into a boolean: no evidence is treated as supported, judge parse failures fail open, and max-turn wrap-up skips the judge. The delivery layer must not describe all of these states as verified.
 
+The migration audit also found an independent zero-tool defect: when an agent-routed model returns text without any tool call, `llm_node` stores `answer` but not the model turn in `messages`. The flag-off compatibility path then has no messages to regenerate from and persists an empty answer. This defect must be fixed at the graph-state source rather than relying on verified delivery being enabled.
+
 ## Goal
 
 Behind a default-off feature flag, make the LangGraph agent route select one canonical payload deterministically. Any payload emitted by a successfully running enabled route must already be committed as the identical `Conversation.answer`, and no post-graph model generation may occur.
+
+Regardless of the verified-delivery flag, every text exit from `llm_node` must preserve its model turn so the compatibility path cannot silently replace a valid zero-tool answer with an empty payload.
 
 This is a one-way delivery guarantee: emitted implies persisted. A client can disconnect after the commit but before receiving the SSE frame, leaving a persisted answer the client did not observe. Bidirectional exactly-once delivery would require client acknowledgement and idempotent replay, which are outside this experiment.
 
@@ -67,8 +71,8 @@ Both notices are deterministic system messages, not model answers. They are comm
 
 1. `groundedness.check()` returns its existing fields plus an explicit status. No evidence returns `not_applicable`; a judge exception or parse failure returns `check_error`; a valid judge result returns `verified` or `rejected`.
 2. `groundedness_node` preserves the current single revision. A first `rejected` result requests a revision; the rechecked result becomes the final status. `check_error` and `not_applicable` do not trigger a rewrite.
-3. The max-turn branch sets `unchecked_max_turns` before ending the graph.
-4. With `SMARTDESK_VERIFIED_AGENT_DELIVERY` disabled, the existing two-stage generation and delivery remain unchanged for a controlled comparison. Verification status is still calculated and observed.
+3. Every ordinary text exit from `llm_node` appends the model turn to `messages`; the max-turn branch sets `unchecked_max_turns` before ending the graph. This zero-tool fix applies under both flag values.
+4. With `SMARTDESK_VERIFIED_AGENT_DELIVERY` disabled, the existing two-stage generation and delivery remain unchanged except for the zero-tool state-completeness fix, allowing a controlled comparison. Verification status is still calculated and observed.
 5. With the flag enabled, the shared policy selects one canonical payload:
    - `verified` or `not_applicable`: `final_state["answer"]`;
    - `check_error` or `unchecked_max_turns`: the retryable notice;
@@ -132,6 +136,8 @@ The Gemini client does not currently expose token or monetary usage. Exact token
 
 The existing agent gold set supplies real queries for flag-off and flag-on status-distribution comparison. `ItemResult`, per-item JSONL, aggregate output, and `results/history.jsonl` gain verification-status data when the LangGraph backend is used.
 
+Eval output also records the answer's scope. `production_delivered` is reserved for LangGraph with verified delivery enabled, where the shared delivery policy selects the exact payload scored by quality metrics. Agent runs on legacy or with verified delivery disabled are labeled `agent_internal`; their quality metrics describe the graph/loop answer, not the text a user necessarily received. Direct and RAG harness answers are labeled `eval_simplified` because those runners do not execute the production orchestration. Aggregate and history records include answer-scope and delivery-kind distributions.
+
 Natural gold queries are not required to force `check_error` or `unchecked_max_turns`: external API failure and turn exhaustion are not stable semantic properties of a question. Those statuses use deterministic fault-injection integration tests. The existing gold set remains the end-to-end quality comparison and receives a changelog entry for the new recorded field; it is not padded with unstable queries merely to obtain nominal status coverage.
 
 ## Error handling
@@ -148,6 +154,7 @@ Tests are written first and must fail for the expected missing behavior before p
 
 1. Groundedness result tests cover `verified`, `rejected`, `not_applicable`, and `check_error` without network calls.
 2. Graph tests cover normal acceptance, revision then acceptance, rejection after one revision, no evidence, checker error, and max-turn status.
+   They also cover a zero-tool agent response and require its model turn to remain available for delivery.
 3. Delivery-policy tests cover both allowed statuses, each blocked-status mapping, missing/unknown status, and shared history-exclusion constants.
 4. Router tests enable the feature flag and assert:
    - the database commit occurs before the first answer frame;
@@ -156,14 +163,17 @@ Tests are written first and must fail for the expected missing behavior before p
    - commit failure emits no answer frame;
    - no post-graph `llm_stream` call occurs;
    - direct, RAG, legacy, and flag-disabled behavior remain unchanged.
+   - a real zero-tool LangGraph run delivers a non-empty answer under both flag values.
 5. History tests assert both notices remain stored but are excluded before the five-row usable-history limit.
 6. Trace tests assert both flag states record status and hashes only after successful persistence, with no raw blocked answer.
 7. Eval tests assert LangGraph results and archived aggregates include verification-status distribution.
+   They also assert that enabled LangGraph quality metrics score the shared delivery-policy payload, while legacy/flag-off Agent and simplified direct/RAG results are explicitly labeled with non-delivery scopes.
 8. Existing gold-set runs compare quality and notice-rate distributions; deterministic fault tests, not natural queries, cover `check_error` and max-turn exhaustion.
 
 ## Acceptance criteria
 
 - Feature flag defaults off.
+- A zero-tool agent response preserves its model turn and cannot become an empty delivered answer under either flag value.
 - With the flag on, the LangGraph agent performs zero model generations after graph completion.
 - No answer SSE frame is emitted before its identical payload is committed.
 - For every completed enabled-path request, reconstructed SSE text equals the stored `Conversation.answer` exactly.
@@ -174,6 +184,7 @@ Tests are written first and must fail for the expected missing behavior before p
 - Revision output is checked again before it can receive `verified`.
 - Raw blocked answers remain recoverable through local checkpoint state linked by `thread_id`, and runtime checkpoint paths are ignored by git.
 - Flag-off traces and eval archives record status distribution before rollout.
+- Eval archives distinguish `production_delivered`, `agent_internal`, and `eval_simplified`; only the first may be described as user-visible answer quality.
 - Existing direct, RAG, legacy-agent, checkpointing, graph self-healing, and eval tests remain green.
 - CASE-002 records the implementation commit, fresh verification output, known latency/call-count measurements, and unavailable cost fields as `unknown`.
 
