@@ -64,6 +64,14 @@ Full source: `docs-local/reference-AGENTS.md` (gitignored, not committed).
 - Redact credentials and sensitive tokens at every persistence or output boundary, including logs, traces, exceptions exposed to clients, and agent messages. Logging an environment-variable name is acceptable; logging its value is not.
 - Model or critical dependency migrations require a real-API smoke test because mocks cannot expose protocol failures such as missing `thoughtSignature` metadata. Notify the user before any test that may consume paid API quota, state the planned scope, and record actual cost as unknown when it cannot be measured.
 
+### Context handoff and project evidence
+
+- `docs-local/CURRENT.md` is the rolling handoff for the active milestone. Update it at every feature boundary with the last verified state, current goal, deferred work, blockers, and exact next entry point.
+- `docs/PROJECT_EVIDENCE.md` records only verified, externally explainable outcomes. Add evidence after a completed milestone; never promote planned, prepared, or merely running work into the achievement log.
+- At a feature boundary, before an overnight stop, or when stale/conflicting context begins to dominate, proactively recommend a fresh task. Before switching, update `CURRENT.md`, any affected Decisions entry, and `PROJECT_EVIDENCE.md` when a new verified outcome exists.
+- A fresh task starts by reading `AGENTS.md`, `docs-local/SmartDesk_Decisions.md`, `docs-local/CURRENT.md`, and only the accepted spec relevant to that task. Chat history is background, not the handoff mechanism.
+- Human-facing reports use plain Chinese and lead with outcome, progress, problems, and decisions needed. Report observable actions, evidence, risk, and results; do not expose or imitate private chain-of-thought.
+
 ### Verified-delivery invariants
 
 - The normal success path must preserve `finalized == delivered == persisted`.
