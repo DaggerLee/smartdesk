@@ -12,14 +12,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import chroma_client
+from agent.action_locks import action_lock
 from agent.delivery import (
     NON_CONTEXT_ANSWERS,
     is_verified_delivery_enabled,
     select_delivery,
 )
-from agent.graph import stream_graph
+from agent.graph import (
+    GraphEvent,
+    get_graph_snapshot,
+    resume_graph_action,
+    stream_graph,
+)
 from agent.loop import SYSTEM_PROMPT, run_agent
 from agent.router import route
+from agent.write_action import ActionResolution
 from auth import get_current_user
 from database import SessionLocal, get_db
 from gemini_client import generate_answer_stream
@@ -48,6 +55,19 @@ class HistoryItem(BaseModel):
     answer: str
     created_at: str
 
+
+def _sse_json(payload) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+def _stream_graph_with_proposal_failure(*args, **kwargs):
+    try:
+        yield from stream_graph(*args, **kwargs)
+    except Exception:
+        query = args[0]
+        if is_hitl_write_note_enabled() and classify_write_intent(query) == "persist":
+            yield GraphEvent(type="proposal_failed", data={})
+            return
+        raise
 
 # ── Message classification ────────────────────────────────────────────────────
 
@@ -192,6 +212,107 @@ def persist_conversation_once(
     return conversation
 
 
+def _resolution_matches(pending: dict, resolution: ActionResolution) -> bool:
+    if pending.get("action_id") != resolution.action_id:
+        return False
+    if pending.get("decision") != resolution.decision:
+        return False
+    if resolution.decision == "approve":
+        return pending.get("approved_payload") == pending.get("original_payload")
+    if resolution.decision == "edit":
+        return pending.get("approved_payload") == {
+            "title": resolution.title,
+            "content": resolution.content,
+        }
+    return pending.get("reject_reason") == resolution.reason
+
+
+def _action_frames(
+    thread_id: str,
+    resolution: ActionResolution,
+    current_user_id: int,
+) -> list[str]:
+    with action_lock(thread_id):
+        snapshot = get_graph_snapshot(thread_id)
+        pending = snapshot.get("pending_action") if snapshot else None
+        if not pending or pending.get("user_id") != current_user_id:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if pending.get("action_id") != resolution.action_id:
+            raise HTTPException(status_code=404, detail="Action not found")
+
+        frames: list[str] = []
+        receipt = pending.get("receipt")
+        if receipt:
+            if not _resolution_matches(pending, resolution):
+                raise HTTPException(status_code=409, detail="Action resolution conflicts")
+            frames.append(_sse_json({"action_result": receipt}))
+            final_state = snapshot
+        else:
+            try:
+                final_state = None
+                for event in resume_graph_action(thread_id, resolution):
+                    if event.type == "final":
+                        final_state = event.data
+                committed = get_graph_snapshot(thread_id)
+                committed_receipt = (
+                    committed.get("pending_action", {}).get("receipt")
+                    if committed
+                    else None
+                )
+                if committed_receipt is None:
+                    raise RuntimeError("action result checkpoint is unavailable")
+                frames.append(_sse_json({"action_result": committed_receipt}))
+                final_state = committed
+            except Exception:
+                frames.append(_sse_json({"error": {"stage": "action_result"}}))
+                frames.append("data: [FAILED]\n\n")
+                return frames
+
+        answer = final_state.get("answer", "")
+        if final_state.get("verification_source") != "action_receipt" or not answer:
+            frames.append(_sse_json({"error": {"stage": "action_result"}}))
+            frames.append("data: [FAILED]\n\n")
+            return frames
+
+        db = SessionLocal()
+        try:
+            persist_conversation_once(
+                db,
+                thread_id=thread_id,
+                kb_id=final_state["kb_id"],
+                question=final_state["query"],
+                answer=answer,
+            )
+        except ConversationThreadConflictError as error:
+            raise HTTPException(
+                status_code=409, detail="Conversation completion conflicts"
+            ) from error
+        except Exception:
+            frames.append(_sse_json({"error": {"stage": "conversation"}}))
+            frames.append("data: [FAILED]\n\n")
+            return frames
+        finally:
+            db.close()
+
+        frames.append(_sse_json(answer))
+        frames.append("data: [DONE]\n\n")
+        return frames
+
+
+@router.post("/actions/{thread_id}/resolve")
+def resolve_action(
+    thread_id: str,
+    resolution: ActionResolution,
+    current_user: User = Depends(get_current_user),
+):
+    frames = _action_frames(thread_id, resolution, current_user.id)
+    return StreamingResponse(
+        iter(frames),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/stream")
@@ -226,8 +347,12 @@ def chat_stream(
                 print(f"[Chat] LangGraph thread_id={thread_id}")
                 recent_history = _recent_usable_history(db, body.kb_id)
                 final_state: dict = {}
-                for event in stream_graph(
-                    body.message, body.kb_id, history=list(reversed(recent_history)), thread_id=thread_id
+                for event in _stream_graph_with_proposal_failure(
+                    body.message,
+                    body.kb_id,
+                    history=list(reversed(recent_history)),
+                    thread_id=thread_id,
+                    user_id=current_user.id,
                 ):
                     if event.type == "tool_call":
                         name = event.data["name"]
@@ -235,6 +360,16 @@ def chat_stream(
                         yield f"data: {json.dumps({'status': label}, ensure_ascii=False)}\n\n"
                     elif event.type == "chunk":
                         yield f"data: {json.dumps(event.data['text'], ensure_ascii=False)}\n\n"
+                    elif event.type == "confirmation_required":
+                        yield _sse_json(
+                            {"confirmation_required": {"thread_id": thread_id, **event.data}}
+                        )
+                        yield "data: [PAUSED]\n\n"
+                        return
+                    elif event.type == "proposal_failed":
+                        yield _sse_json({"error": {"stage": "proposal"}})
+                        yield "data: [FAILED]\n\n"
+                        return
                     elif event.type == "final":
                         final_state = event.data
 
@@ -512,3 +647,7 @@ def clear_history(
     db.query(Conversation).filter(Conversation.kb_id == kb_id).delete()
     db.commit()
     return {"message": "Chat history cleared"}
+from agent.write_note_policy import (
+    classify_write_intent,
+    is_hitl_write_note_enabled,
+)

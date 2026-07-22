@@ -448,6 +448,7 @@ def _write_protocol_failure(
         "wrap_up": capped,
         "answer": error if capped else "",
         "verification_status": "rejected" if capped else "pending",
+        "verification_source": "llm_groundedness" if capped else None,
     }
 
 
@@ -1058,3 +1059,13 @@ def resume_graph_action(
     receipt = ActionReceipt.model_validate(pending["receipt"])
     yield GraphEvent(type="action_result", data=receipt.model_dump())
     yield GraphEvent(type="final", data=dict(snapshot.values))
+
+
+def get_graph_snapshot(thread_id: str) -> dict | None:
+    """Return the latest durable state for one graph thread, if it exists."""
+    snapshot = _compiled_graph.get_state(
+        {"configurable": {"thread_id": thread_id}}
+    )
+    if not snapshot.values:
+        return None
+    return dict(snapshot.values)
