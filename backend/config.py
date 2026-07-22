@@ -13,6 +13,10 @@ RELEVANCE_THRESHOLD: float = 0.62
 # ── Agent loop ────────────────────────────────────────────────────────────────
 MAX_AGENT_TURNS: int = 5
 
+# Phase A keeps write-note HITL disabled unless explicitly enabled.
+HITL_WRITE_NOTE_ENV_VAR: str = "SMARTDESK_HITL_WRITE_NOTE"
+HITL_WRITE_NOTE_DEFAULT: bool = False
+
 # ── LLM / Gemini ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
