@@ -15,6 +15,12 @@ _BASE = "https://generativelanguage.googleapis.com/v1beta"
 _model_validated = False
 
 
+def _history_field(turn, field: str) -> str:
+    if isinstance(turn, dict):
+        return turn[field]
+    return getattr(turn, field)
+
+
 def _find_model() -> str:
     """Return config.GEMINI_MODEL, validating its availability once per process.
 
@@ -64,8 +70,8 @@ def _build_prompt(
     if history:
         lines = ["Previous conversation:"]
         for turn in history:
-            lines.append(f"User: {turn.question}")
-            lines.append(f"Assistant: {turn.answer}")
+            lines.append(f"User: {_history_field(turn, 'question')}")
+            lines.append(f"Assistant: {_history_field(turn, 'answer')}")
         history_block = "\n".join(lines) + "\n\n"
 
     web_block = ""

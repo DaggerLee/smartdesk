@@ -16,9 +16,12 @@ tests/test_graph_self_healing.py and is unaffected by this file.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import agent.graph as graph_module
 from agent.graph import stream_graph
+from gemini_client import _build_prompt
 from llm.client import LLMResponse, ToolCall
 
 
@@ -88,3 +91,42 @@ def test_agent_path_emits_tool_call_before_final():
     assert final["route"] == "agent"
     assert final["answer"] == "Well-grounded answer."
     assert final["messages"]  # chat.py's two-stage re-stream needs this
+
+
+def test_stream_graph_normalizes_history_before_checkpointing():
+    captured = {}
+    history = [SimpleNamespace(question="previous question", answer="previous answer")]
+
+    def capture_stream(initial_state, **kwargs):
+        captured["history"] = initial_state["history"]
+        yield "values", initial_state
+
+    with patch.object(graph_module._compiled_graph, "stream", side_effect=capture_stream):
+        list(stream_graph("question", kb_id=1, history=history))
+
+    assert captured["history"] == [
+        {"question": "previous question", "answer": "previous answer"},
+    ]
+
+
+def test_rag_followup_accepts_serialized_history():
+    history = [{"question": "previous question", "answer": "previous answer"}]
+    with patch("agent.graph.route", return_value="rag"), \
+         patch("agent.graph._classify", return_value="followup"), \
+         patch("chroma_client.query_documents", return_value=[]), \
+         patch("agent.graph.generate_answer_stream", return_value=iter(["answer"])):
+        events = list(stream_graph("tell me more", kb_id=1, history=history))
+
+    assert events[-1].data["answer"] == "answer"
+
+
+def test_rag_prompt_accepts_serialized_history():
+    prompt = _build_prompt(
+        "tell me more",
+        context=[],
+        history=[{"question": "previous question", "answer": "previous answer"}],
+        msg_type="followup",
+    )
+
+    assert "User: previous question" in prompt
+    assert "Assistant: previous answer" in prompt

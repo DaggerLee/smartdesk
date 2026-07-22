@@ -213,7 +213,7 @@ def _classify(message: str) -> str:
 class GraphState(TypedDict, total=False):
     query: str
     kb_id: int
-    history: list  # Conversation ORM rows (rag path only), oldest first
+    history: list[dict[str, str]]  # Checkpoint-safe turns, oldest first
 
     route: str  # "direct" | "rag" | "agent"
 
@@ -302,7 +302,7 @@ def rag_node(state: GraphState) -> dict:
         pass
 
     elif msg_type in ("meta", "followup") and history:
-        rag_query = history[-1].question
+        rag_query = history[-1]["question"]
         results = chroma_client.query_documents(kb_id, rag_query, n_results=5)
         context_texts = [r["text"] for r in results]
         seen_files: set = set()
@@ -649,6 +649,20 @@ def build_graph(checkpointer=None):
 _compiled_graph = build_graph()
 
 
+def _serialize_history(history: list) -> list[dict[str, str]]:
+    """Convert database/history objects into checkpoint-safe plain data."""
+    serialized = []
+    for turn in history:
+        if isinstance(turn, dict):
+            question = turn["question"]
+            answer = turn["answer"]
+        else:
+            question = turn.question
+            answer = turn.answer
+        serialized.append({"question": question, "answer": answer})
+    return serialized
+
+
 def stream_graph(
     query: str,
     kb_id: int,
@@ -682,7 +696,11 @@ def stream_graph(
     module docstring).
     """
     config = {"configurable": {"thread_id": thread_id or uuid.uuid4().hex}}
-    initial_state: GraphState = {"query": query, "kb_id": kb_id, "history": history or []}
+    initial_state: GraphState = {
+        "query": query,
+        "kb_id": kb_id,
+        "history": _serialize_history(history or []),
+    }
     final_state: GraphState = dict(initial_state)  # type: ignore[assignment]
 
     for mode, chunk in _compiled_graph.stream(
