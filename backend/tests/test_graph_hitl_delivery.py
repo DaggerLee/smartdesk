@@ -14,7 +14,7 @@ from llm.client import LLMResponse, ToolCall
 def test_action_receipt_delivery_is_identical_and_model_free_for_both_flag_states(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified_flag: str
 ) -> None:
-    monkeypatch.setenv("SMARTDESK_VERIFIED_DELIVERY", verified_flag)
+    monkeypatch.setenv("SMARTDESK_VERIFIED_AGENT_DELIVERY", verified_flag)
     thread_id = f"receipt-flag-{verified_flag}-{uuid.uuid4().hex}"
     root = tmp_path / verified_flag
     root.mkdir()

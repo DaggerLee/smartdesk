@@ -53,7 +53,7 @@ def test_invalid_write_round_executes_no_tools_and_stops_at_shared_failure_cap(
     assert [event.type for event in events] == ["final"]
     assert complete_mock.call_count == 2
     assert events[0].data["tool_fail_counts"]["write_protocol"] == 2
-    assert events[0].data["verification_status"] == "failed_protocol"
+    assert events[0].data["verification_status"] == "rejected"
     retrieve_mock.assert_not_called()
     write_mock.assert_not_called()
     groundedness_mock.assert_not_called()

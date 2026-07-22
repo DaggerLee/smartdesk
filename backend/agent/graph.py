@@ -121,7 +121,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 import chroma_client
 from agent.groundedness import check as _check_groundedness
@@ -403,6 +403,54 @@ _WRITE_NOTE_DECLARATION = {
 }
 
 
+def _write_protocol_failure(
+    state: GraphState,
+    messages: list[dict],
+    resp,
+) -> dict:
+    tool_fail_counts = dict(state.get("tool_fail_counts") or {})
+    failure_count = tool_fail_counts.get("write_protocol", 0) + 1
+    tool_fail_counts["write_protocol"] = failure_count
+    error = (
+        "The write_note tool-call round was invalid. No tools were executed. "
+        "Retry with exactly one write_note call containing only a valid title and content."
+    )
+    updated_messages = list(messages)
+    updated_messages.append(model_turn(resp))
+    updated_messages.append(
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": tc.name,
+                        "response": {"error": error},
+                    }
+                }
+                for tc in resp.tool_calls
+            ],
+        }
+    )
+    _trace_write(
+        {
+            "type": "tool_error",
+            "tool": "write_protocol",
+            "fail_count": failure_count,
+            "unavailable": failure_count >= _MAX_TOOL_FAILURES,
+        }
+    )
+    capped = failure_count >= _MAX_TOOL_FAILURES
+    return {
+        "messages": updated_messages,
+        "pending_tool_calls": None,
+        "tool_fail_counts": tool_fail_counts,
+        "invalid_write_round": not capped,
+        "wrap_up": capped,
+        "answer": error if capped else "",
+        "verification_status": "rejected" if capped else "pending",
+    }
+
+
 def llm_node(state: GraphState) -> dict:
     """Gemini call + function-calling decision — the reasoning step of the
     agent path. Also owns the two forced, tool-free completions that don't
@@ -438,6 +486,7 @@ def llm_node(state: GraphState) -> dict:
     write_enabled = (
         is_hitl_write_note_enabled()
         and state.get("write_intent") == "persist"
+        and bool(state.get("user_id"))
         and not state.get("write_action_seen", False)
     )
     if write_enabled:
@@ -448,49 +497,13 @@ def llm_node(state: GraphState) -> dict:
     if resp.tool_calls:
         write_calls = [tc for tc in resp.tool_calls if tc.name == "write_note"]
         if write_calls and not (len(resp.tool_calls) == 1 and len(write_calls) == 1):
-            tool_fail_counts = dict(state.get("tool_fail_counts") or {})
-            failure_count = tool_fail_counts.get("write_protocol", 0) + 1
-            tool_fail_counts["write_protocol"] = failure_count
-            error = (
-                "A tool-call round containing write_note must contain exactly "
-                "one call and no other tools. No tools were executed."
-            )
-            messages.append(model_turn(resp))
-            messages.append(
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "functionResponse": {
-                                "name": tc.name,
-                                "response": {"error": error},
-                            }
-                        }
-                        for tc in resp.tool_calls
-                    ],
-                }
-            )
-            _trace_write(
-                {
-                    "type": "tool_error",
-                    "tool": "write_protocol",
-                    "fail_count": failure_count,
-                    "unavailable": failure_count >= _MAX_TOOL_FAILURES,
-                }
-            )
-            capped = failure_count >= _MAX_TOOL_FAILURES
-            return {
-                "messages": messages,
-                "pending_tool_calls": None,
-                "tool_fail_counts": tool_fail_counts,
-                "invalid_write_round": not capped,
-                "wrap_up": capped,
-                "answer": error if capped else "",
-                "verification_status": "failed_protocol" if capped else "pending",
-            }
+            return _write_protocol_failure(state, messages, resp)
         if len(resp.tool_calls) == 1 and len(write_calls) == 1:
             call = write_calls[0]
-            payload = validate_write_note_payload(**call.args)
+            try:
+                payload = validate_write_note_payload(**call.args)
+            except (ValidationError, TypeError):
+                return _write_protocol_failure(state, messages, resp)
             messages.append(model_turn(resp))
             pending = PendingAction(
                 action_id=uuid.uuid4().hex,
@@ -502,6 +515,7 @@ def llm_node(state: GraphState) -> dict:
                 "pending_tool_calls": None,
                 "pending_action": pending.model_dump(),
                 "write_action_seen": True,
+                "invalid_write_round": False,
             }
         # Emit one "tool_call" custom event per call, before any of them run —
         # same timing as run_agent()'s yield AgentEvent(type="tool_call", ...),
@@ -516,10 +530,18 @@ def llm_node(state: GraphState) -> dict:
         # Echo the model turn verbatim (raw parts keep the thoughtSignature
         # that gemini-3.5+ requires on replayed functionCall history).
         messages.append(model_turn(resp))
-        return {"messages": messages, "pending_tool_calls": resp.tool_calls}
+        return {
+            "messages": messages,
+            "pending_tool_calls": resp.tool_calls,
+            "invalid_write_round": False,
+        }
 
     messages.append(model_turn(resp))
-    return {"messages": messages, "answer": resp.text or ""}
+    return {
+        "messages": messages,
+        "answer": resp.text or "",
+        "invalid_write_round": False,
+    }
 
 
 def _llm_route_edge(state: GraphState) -> str:
@@ -1031,8 +1053,8 @@ def resume_graph_action(
     pending = snapshot.values.get("pending_action")
     if not pending or not pending.get("receipt"):
         raise RuntimeError("action resolution did not produce a committed receipt")
-    receipt = ActionReceipt.model_validate(pending["receipt"])
-    yield GraphEvent(type="action_result", data=receipt.model_dump())
     if snapshot.next:
         raise RuntimeError("action graph did not reach a terminal state")
+    receipt = ActionReceipt.model_validate(pending["receipt"])
+    yield GraphEvent(type="action_result", data=receipt.model_dump())
     yield GraphEvent(type="final", data=dict(snapshot.values))
