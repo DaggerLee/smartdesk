@@ -112,6 +112,8 @@
 - [ ] Implement whole-round validation before any tool execution.
 - [ ] Write failing tests proving succeeded/replayed/rejected/conflict/failed receipts append legal `functionResponse` messages, make zero post-receipt Gemini calls, bypass groundedness, and enter `action_finalize_node`.
 - [ ] Implement receipt finalization with `verification_status="verified"` and `verification_source="action_receipt"`; keep ordinary groundedness as `llm_groundedness`.
+- [ ] Add flag-on/flag-off tests proving `action_receipt` always bypasses the ordinary verified-delivery two-stage branch, delivers canonical `GraphState.answer`, never selects `llm_stream`, and makes zero post-graph Gemini calls.
+- [ ] Add strict trace/evidence whitelist tests proving `title`, `content`, reject `reason`, `original_payload`, and `approved_payload` never appear; permit only approved redacted receipt metadata.
 - [ ] Run graph/self-healing/checkpoint suites and commit with `feat(graph): add checkpointed write approval flow`.
 
 ### Task 5: Conversation thread migration and idempotent persistence
@@ -150,7 +152,8 @@
 - [ ] Write failing tests for exact repeated resolution, changed edit payload/reject reason, and conflicting decisions.
 - [ ] Implement idempotent stored-result return and 409 conflicts.
 - [ ] Write failing SSE ordering tests: confirmation only after proposal checkpoint; action result only after terminal receipt checkpoint; final answer only after Conversation commit.
-- [ ] Implement checkpoint rereads before confirmation/action frames and reuse the verified delivery selection for final persistence.
+- [ ] Implement checkpoint rereads before confirmation/action frames; when verification_source is action_receipt, bypass ordinary verified-delivery selection and commit canonical GraphState.answer before emitting it.
+- [ ] Test byte-for-byte identity between canonical SSE answer and Conversation.answer with the ordinary verified-delivery flag both enabled and disabled.
 - [ ] Add failure tests for proposal, action-result checkpoint, graph finalization, and Conversation commit; assert typed stage error plus `[FAILED]` and absence of later success frames.
 - [ ] Add a summarize-and-save test proving the file contains the summary while final chat contains only the canonical receipt template.
 - [ ] Run focused route, verified-delivery, checkpoint, and streaming tests; commit with `feat(chat): expose HITL action resolution`.
@@ -239,7 +242,7 @@
 - Changes defaults to LangGraph plus HITL enabled only after Task 10 passes.
 - Retains `SMARTDESK_AGENT_BACKEND=legacy` as the emergency rollback.
 
-- [ ] Write failing config tests for the final defaults and invalid backend rejection.
+- [ ] Write failing config tests for final defaults and fail-fast rejection of every backend value other than exactly legacy or langgraph; invalid-backend production code belongs only to this task.
 - [ ] Change config, example environment, and Docker defaults only.
 - [ ] Run full direct/RAG/agent cutover tests and the complete suite again.
 - [ ] Commit as an independent cutover commit; do not merge or push.

@@ -97,6 +97,11 @@ SMARTDESK_HITL_WRITE_NOTE=true
 The final cutover uses the same pair, but changes the defaults only in a
 separate commit after every cutover gate passes.
 
+Any `SMARTDESK_AGENT_BACKEND` value other than `legacy` or `langgraph` is a
+startup configuration error and fails fast instead of silently selecting a
+backend. This behavior is deliberately implemented and tested only in the
+independent Task 11 cutover commit; Phase A does not mix it into feature work.
+
 Emergency rollback may set the backend to `legacy` while leaving
 `SMARTDESK_HITL_WRITE_NOTE=true`. In that combination only, an explicit
 persist request returns the fixed capability-unavailable notice before the
@@ -420,6 +425,20 @@ for a deterministically verified action receipt. Ordinary grounded answers use
 `verification_source="llm_groundedness"`. The meaning is added to
 `SmartDesk_Decisions.md` when the feature merges.
 
+An `action_receipt` terminal bypasses the ordinary verified-delivery feature
+flag and its two-stage answer-selection branch. When
+`verification_source == "action_receipt"`, delivery always selects the
+canonical `GraphState.answer` constructed by `action_finalize_node`; it never
+selects `llm_stream`, never calls Gemini after graph completion, and therefore
+has exactly zero post-graph model calls. The flag-on and flag-off paths are
+required to produce the same receipt answer and the same zero-call count.
+
+The identical canonical answer is committed to `Conversation.answer` before
+any final answer frame is emitted. The emitted SSE text and persisted
+`Conversation.answer` must be byte-for-byte identical. Tests cover both
+verified-delivery flag states, prove the identity invariant, and prove no
+additional Gemini call occurs.
+
 ## SSE persistence boundaries
 
 The stream has three independent publication boundaries.
@@ -495,6 +514,12 @@ conflict, and failure. They may contain thread ID, action ID, result, edited
 flag, relative path, hash, byte count, read-back flag, and safe error code.
 They do not contain note title/content, reject reason, absolute path, tokens,
 or raw blocked answers.
+
+Trace and typed-evidence tests assert an explicit field whitelist, not only
+value redaction. Neither surface may contain `title`, `content`, reject
+`reason`, `original_payload`, or `approved_payload`. Only the approved receipt
+metadata fields listed above may cross this boundary; adding a field requires
+an intentional schema and test change.
 
 The legacy capability-unavailable notice is a frozen policy constant and is
 added to the append-only non-context set.
