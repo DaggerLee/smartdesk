@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 TOP_K: int = 5
@@ -16,6 +17,12 @@ MAX_AGENT_TURNS: int = 5
 # Phase A keeps write-note HITL disabled unless explicitly enabled.
 HITL_WRITE_NOTE_ENV_VAR: str = "SMARTDESK_HITL_WRITE_NOTE"
 HITL_WRITE_NOTE_DEFAULT: bool = False
+
+# The Docker deployment mounts its persistent volume at /app/data. With /app
+# as the working directory, this relative default stays inside that volume.
+WRITE_NOTE_ROOT_ENV_VAR: str = "SMARTDESK_DATA_DIR"
+WRITE_NOTE_ROOT_DEFAULT: Path = Path("data")
+WRITE_NOTE_ROOT: Path = Path(os.getenv(WRITE_NOTE_ROOT_ENV_VAR, WRITE_NOTE_ROOT_DEFAULT))
 
 # ── LLM / Gemini ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
