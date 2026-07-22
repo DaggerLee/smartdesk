@@ -27,6 +27,10 @@ from agent.graph import (
 from agent.loop import SYSTEM_PROMPT, run_agent
 from agent.router import route
 from agent.write_action import ActionResolution
+from agent.write_note_policy import (
+    classify_write_intent,
+    is_hitl_write_note_enabled,
+)
 from auth import get_current_user
 from database import SessionLocal, get_db
 from gemini_client import generate_answer_stream
@@ -227,6 +231,11 @@ def _resolution_matches(pending: dict, resolution: ActionResolution) -> bool:
     return pending.get("reject_reason") == resolution.reason
 
 
+def _raise_for_file_conflict(receipt: dict) -> None:
+    if receipt.get("result") == "conflict":
+        raise HTTPException(status_code=409, detail="Action file conflicts")
+
+
 def _action_frames(
     thread_id: str,
     resolution: ActionResolution,
@@ -245,6 +254,7 @@ def _action_frames(
         if receipt:
             if not _resolution_matches(pending, resolution):
                 raise HTTPException(status_code=409, detail="Action resolution conflicts")
+            _raise_for_file_conflict(receipt)
             frames.append(_sse_json({"action_result": receipt}))
             final_state = snapshot
         else:
@@ -261,8 +271,11 @@ def _action_frames(
                 )
                 if committed_receipt is None:
                     raise RuntimeError("action result checkpoint is unavailable")
+                _raise_for_file_conflict(committed_receipt)
                 frames.append(_sse_json({"action_result": committed_receipt}))
                 final_state = committed
+            except HTTPException:
+                raise
             except Exception:
                 frames.append(_sse_json({"error": {"stage": "action_result"}}))
                 frames.append("data: [FAILED]\n\n")
@@ -647,7 +660,3 @@ def clear_history(
     db.query(Conversation).filter(Conversation.kb_id == kb_id).delete()
     db.commit()
     return {"message": "Chat history cleared"}
-from agent.write_note_policy import (
-    classify_write_intent,
-    is_hitl_write_note_enabled,
-)

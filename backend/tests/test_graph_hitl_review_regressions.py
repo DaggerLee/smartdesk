@@ -82,7 +82,7 @@ def test_invalid_write_arguments_become_bounded_redacted_protocol_errors(
 
     assert complete_mock.call_count == 2
     assert events[-1].data["verification_status"] == "rejected"
-    assert events[-1].data["verification_source"] == "llm_groundedness"
+    assert events[-1].data["verification_source"] is None
     assert events[-1].data["tool_fail_counts"]["write_protocol"] == 2
     serialized = repr(traces) + repr(events[-1].data["messages"][-1])
     assert "private/unsafe-title" not in serialized

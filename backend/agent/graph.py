@@ -448,7 +448,7 @@ def _write_protocol_failure(
         "wrap_up": capped,
         "answer": error if capped else "",
         "verification_status": "rejected" if capped else "pending",
-        "verification_source": "llm_groundedness" if capped else None,
+        "verification_source": None,
     }
 
 
