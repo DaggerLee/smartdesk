@@ -90,6 +90,7 @@ if _AGENT_BACKEND == "langgraph":
     print("[run_eval] SMARTDESK_AGENT_BACKEND=langgraph — agent path routed through agent.graph.run_graph()")
 
 import config
+from agent.delivery import is_verified_delivery_enabled, select_delivery
 from agent.groundedness import check as _groundedness_check
 from llm.trace import context as _trace_context
 from agent.loop import run_agent
@@ -97,6 +98,7 @@ from agent.router import route as _router_route
 from agent.tools.retrieve import RetrieveTool
 from llm.client import complete
 
+_run_graph = None
 if _AGENT_BACKEND == "langgraph":
     from agent.graph import run_graph as _run_graph
 
@@ -175,10 +177,13 @@ class ItemResult:
     relevance_ok: Optional[bool] = None
 
     answer: str = ""
+    answer_scope: str = "unassigned"
+    delivery_kind: Optional[str] = None
     contains_hits: int = 0
     contains_pass: bool = False
 
     grounded: Optional[bool] = None
+    verification_status: Optional[str] = None
     faithfulness: Optional[float] = None
     answer_relevancy: Optional[float] = None
 
@@ -283,7 +288,10 @@ def _run_rag(query: str, chunks: list[str]) -> str:
     return resp.text or ""
 
 
-def _run_agent_path(query: str, kb_id: int) -> tuple[str, list[str], Optional[bool]]:
+def _run_agent_path(
+    query: str,
+    kb_id: int,
+) -> tuple[str, list[str], Optional[bool], Optional[str]]:
     if _AGENT_BACKEND == "langgraph":
         return _run_agent_path_graph(query, kb_id)
 
@@ -297,10 +305,13 @@ def _run_agent_path(query: str, kb_id: int) -> tuple[str, list[str], Optional[bo
             grounded = ev.data.get("grounded")
             evidence = ev.data.get("evidence", [])
     chunks = [e["text"] for e in evidence if isinstance(e, dict) and "text" in e]
-    return answer, chunks, grounded
+    return answer, chunks, grounded, None
 
 
-def _run_agent_path_graph(query: str, kb_id: int) -> tuple[str, list[str], Optional[bool]]:
+def _run_agent_path_graph(
+    query: str,
+    kb_id: int,
+) -> tuple[str, list[str], Optional[bool], Optional[str]]:
     """LangGraph-backend equivalent of _run_agent_path(), used only when
     SMARTDESK_AGENT_BACKEND=langgraph (W5 T5 migration regression). Calls
     agent.graph.run_graph() — the same entry point
@@ -337,7 +348,7 @@ def _run_agent_path_graph(query: str, kb_id: int) -> tuple[str, list[str], Optio
     grounded = final_state.get("grounded")
     evidence = final_state.get("evidence") or []
     chunks = [e["text"] for e in evidence if isinstance(e, dict) and "text" in e]
-    return answer, chunks, grounded
+    return answer, chunks, grounded, final_state.get("verification_status")
 
 
 # ── Single-item eval ───────────────────────────────────────────────────────────
@@ -390,18 +401,35 @@ def _eval_item(item: dict) -> ItemResult:
 
         # Layer 3a — generate answer via actual route
         answer = ""
+        answer_scope = "unassigned"
+        delivery_kind: Optional[str] = None
         grounded: Optional[bool] = None
+        verification_status: Optional[str] = None
 
         if actual_route == "direct":
             answer = _run_direct(item["query"])
+            answer_scope = "eval_simplified"
         elif actual_route == "rag":
             answer = _run_rag(item["query"], retrieved_chunks)
+            answer_scope = "eval_simplified"
         else:  # agent
-            answer, agent_chunks, grounded = _run_agent_path(item["query"], item["kb_id"])
+            answer, agent_chunks, grounded, verification_status = _run_agent_path(
+                item["query"], item["kb_id"]
+            )
             if agent_chunks:
                 retrieved_chunks = agent_chunks
+            if _AGENT_BACKEND == "langgraph" and is_verified_delivery_enabled():
+                decision = select_delivery(answer, verification_status)
+                answer = decision.payload
+                answer_scope = "production_delivered"
+                delivery_kind = decision.kind
+            else:
+                answer_scope = "agent_internal"
 
         result.answer = answer
+        result.answer_scope = answer_scope
+        result.delivery_kind = delivery_kind
+        result.verification_status = verification_status
 
         if not answer.strip():
             # No exception was raised, but the model produced no visible text
@@ -465,6 +493,17 @@ def aggregate(results: list[ItemResult]) -> dict:
     faith_vals = [r.faithfulness for r in results if r.faithfulness is not None]
     relev_vals = [r.answer_relevancy for r in results if r.answer_relevancy is not None]
     source_checked = [r for r in results if r.source_disclosed is not None]
+    verification_statuses = sorted(
+        status
+        for status in {r.verification_status for r in results}
+        if status is not None
+    )
+    answer_scopes = sorted({r.answer_scope for r in results})
+    delivery_kinds = sorted(
+        kind
+        for kind in {r.delivery_kind for r in results}
+        if kind is not None
+    )
 
     return {
         "router_accuracy_strict":  _pct(sum(1 for r in results if r.route_correct), total),
@@ -480,6 +519,18 @@ def aggregate(results: list[ItemResult]) -> dict:
         "answer_relevancy_n":      len(relev_vals),
         "u_source_disclosure_rate": _pct(sum(1 for r in source_checked if r.source_disclosed), len(source_checked)),
         "u_source_disclosure_n":  len(source_checked),
+        "verification_status_distribution": {
+            status: sum(1 for r in results if r.verification_status == status)
+            for status in verification_statuses
+        },
+        "answer_scope_distribution": {
+            scope: sum(1 for r in results if r.answer_scope == scope)
+            for scope in answer_scopes
+        },
+        "delivery_kind_distribution": {
+            kind: sum(1 for r in results if r.delivery_kind == kind)
+            for kind in delivery_kinds
+        },
         "total":                   total,
         "errors":                  sum(1 for r in results if r.error),
     }

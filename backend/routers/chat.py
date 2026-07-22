@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import chroma_client
+from agent.delivery import (
+    NON_CONTEXT_ANSWERS,
+    is_verified_delivery_enabled,
+    select_delivery,
+)
 from agent.graph import stream_graph
 from agent.loop import SYSTEM_PROMPT, run_agent
 from agent.router import route
@@ -17,7 +23,11 @@ from auth import get_current_user
 from database import SessionLocal, get_db
 from gemini_client import generate_answer_stream
 from llm.client import stream as llm_stream
-from llm.trace import context as _trace_context
+from llm.trace import (
+    context as _trace_context,
+    iterate_with_context as _trace_iter,
+    write as _trace_write,
+)
 from models import Conversation, KnowledgeBase, User
 from tools import assess_rag_quality, fetch_weather, is_weather_query, web_search
 
@@ -103,6 +113,23 @@ def _owned_kb(kb_id: int, user_id: int, db: Session) -> KnowledgeBase:
     return kb
 
 
+def _recent_usable_history(db: Session, kb_id: int) -> list[Conversation]:
+    """Load five usable turns; fixed delivery notices never enter context."""
+    return (
+        db.query(Conversation)
+        .filter(
+            Conversation.kb_id == kb_id,
+            Conversation.answer.notin_(tuple(sorted(NON_CONTEXT_ANSWERS))),
+        )
+        .order_by(Conversation.created_at.desc())
+        .limit(5)
+        .all()
+    )
+
+
+def _answer_sha256(answer: str) -> str:
+    return hashlib.sha256(answer.encode("utf-8")).hexdigest()
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/stream")
@@ -135,13 +162,7 @@ def chat_stream(
                 # thread_id) — see agent/graph.py's module docstring.
                 thread_id = uuid.uuid4().hex
                 print(f"[Chat] LangGraph thread_id={thread_id}")
-                recent_history = (
-                    db.query(Conversation)
-                    .filter(Conversation.kb_id == body.kb_id)
-                    .order_by(Conversation.created_at.desc())
-                    .limit(5)
-                    .all()
-                )
+                recent_history = _recent_usable_history(db, body.kb_id)
                 final_state: dict = {}
                 for event in stream_graph(
                     body.message, body.kb_id, history=list(reversed(recent_history)), thread_id=thread_id
@@ -159,27 +180,50 @@ def chat_stream(
                 answer = final_state.get("answer", "")
 
                 if route_taken == "agent":
-                    # Two-stage finish, same as legacy generate_agent(): re-stream via a
-                    # fresh llm_stream() call over the accumulated messages rather than
-                    # replaying the loop's own (already groundedness-checked) text — see
-                    # agent/graph.py's module docstring for why this discards
-                    # final_state["answer"].
-                    chunks: List[str] = []
-                    final_msgs = final_state.get("messages")
-                    if final_msgs:
-                        for chunk in llm_stream(final_msgs, system=SYSTEM_PROMPT):
-                            chunks.append(chunk)
-                            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                    answer = "".join(chunks)
+                    graph_answer = answer
+                    verification_status = final_state.get("verification_status")
+                    feature_enabled = is_verified_delivery_enabled()
 
-                    # Mirrors generate_agent(): a fresh session, since this closure
-                    # resumes after the endpoint function has already returned.
+                    if feature_enabled:
+                        decision = select_delivery(graph_answer, verification_status)
+                        answer = decision.payload
+                        delivery_kind = decision.kind
+                        post_graph_generation_calls = 0
+                    else:
+                        chunks: List[str] = []
+                        final_msgs = final_state.get("messages")
+                        if final_msgs:
+                            for chunk in llm_stream(final_msgs, system=SYSTEM_PROMPT):
+                                chunks.append(chunk)
+                                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        answer = "".join(chunks)
+                        delivery_kind = "regenerated_answer"
+                        post_graph_generation_calls = 1
+
                     _db = SessionLocal()
                     try:
                         _db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
                         _db.commit()
                     finally:
                         _db.close()
+
+                    graph_hash = _answer_sha256(graph_answer)
+                    persisted_hash = _answer_sha256(answer)
+                    _trace_write({
+                        "type": "agent_delivery",
+                        "thread_id": thread_id,
+                        "verification_status": verification_status,
+                        "feature_enabled": feature_enabled,
+                        "delivery_kind": delivery_kind,
+                        "graph_answer_sha256": graph_hash,
+                        "persisted_payload_sha256": persisted_hash,
+                        "graph_answer_matches_persisted": graph_hash == persisted_hash,
+                        "post_graph_generation_calls": post_graph_generation_calls,
+                        "persisted_payload_chars": len(answer),
+                    })
+
+                    if feature_enabled:
+                        yield f"data: {json.dumps(answer, ensure_ascii=False)}\n\n"
 
                 else:
                     if route_taken == "rag":
@@ -203,7 +247,11 @@ def chat_stream(
                     db.commit()
 
                 yield "data: [DONE]\n\n"
-        return StreamingResponse(generate_langgraph(), media_type="text/event-stream", headers=_sse_headers)
+        return StreamingResponse(
+            _trace_iter(generate_langgraph(), request_id=request_id),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     with _trace_context(request_id=request_id):
         path = route(body.message)
@@ -222,7 +270,11 @@ def chat_stream(
                 db.add(conv)
                 db.commit()
                 yield "data: [DONE]\n\n"
-        return StreamingResponse(generate_direct(), media_type="text/event-stream", headers=_sse_headers)
+        return StreamingResponse(
+            _trace_iter(generate_direct(), request_id=request_id),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     # ── agent: multi-turn tool loop ───────────────────────────────────────────
     if path == "agent":
@@ -252,17 +304,15 @@ def chat_stream(
                 finally:
                     _db.close()
                 yield "data: [DONE]\n\n"
-        return StreamingResponse(generate_agent(), media_type="text/event-stream", headers=_sse_headers)
+        return StreamingResponse(
+            _trace_iter(generate_agent(), request_id=request_id),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     # ── rag: v1 existing chain (unchanged) ───────────────────────────────────
     # Fetch the last 5 conversations for memory context (oldest first)
-    recent_history = (
-        db.query(Conversation)
-        .filter(Conversation.kb_id == body.kb_id)
-        .order_by(Conversation.created_at.desc())
-        .limit(5)
-        .all()
-    )
+    recent_history = _recent_usable_history(db, body.kb_id)
     history = list(reversed(recent_history))
 
     # ── Classify message and decide RAG strategy ──────────────────────────────
@@ -359,7 +409,11 @@ def chat_stream(
             db.commit()
             yield "data: [DONE]\n\n"
 
-    return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers)
+    return StreamingResponse(
+        _trace_iter(generate(), request_id=request_id),
+        media_type="text/event-stream",
+        headers=_sse_headers,
+    )
 
 
 @router.get("/history/{kb_id}", response_model=List[HistoryItem])

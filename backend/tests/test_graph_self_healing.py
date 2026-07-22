@@ -41,11 +41,19 @@ def _retrieve_result(relevance_ok: bool = True) -> dict:
 
 
 def _grounded_ok() -> dict:
-    return {"supported": True, "unsupported_sentences": []}
+    return {
+        "supported": True,
+        "unsupported_sentences": [],
+        "verification_status": "verified",
+    }
 
 
 def _grounded_fail(sentences: list[str] | None = None) -> dict:
-    return {"supported": False, "unsupported_sentences": sentences or ["Invented claim."]}
+    return {
+        "supported": False,
+        "unsupported_sentences": sentences or ["Invented claim."],
+        "verification_status": "rejected",
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +77,33 @@ def test_normal_path_matches_legacy_outcome():
 
     assert result["answer"] == "Well-grounded answer."
     assert result["grounded"] is True
+    assert result["verification_status"] == "verified"
     assert complete_mock.call_count == 2  # retrieve round + final answer, no revision
+
+
+def test_zero_tool_agent_answer_preserves_model_turn_for_delivery():
+    response = LLMResponse(
+        text="Direct agent answer.",
+        tool_calls=[],
+        raw={
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "Direct agent answer."}],
+                }
+            }]
+        },
+    )
+
+    with patch("agent.graph.complete", return_value=response):
+        result = run_graph("hello", kb_id=1)
+
+    assert result["answer"] == "Direct agent answer."
+    assert result["messages"][-1] == {
+        "role": "model",
+        "parts": [{"text": "Direct agent answer."}],
+    }
+    assert result["verification_status"] == "not_applicable"
 
 
 # ── Mechanism 1: tool error retry ─────────────────────────────────────────────
@@ -134,8 +168,46 @@ def test_groundedness_revises_on_fail():
 
     assert result["answer"] == "Revised answer, properly grounded."
     assert result["grounded"] is True
+    assert result["verification_status"] == "verified"
     assert result["revision_count"] == 1
     assert complete_mock.call_count == 3
+
+
+def test_rejected_after_one_revision_keeps_final_rejected_status():
+    complete_mock = MagicMock(side_effect=[
+        _tool("retrieve", query="q"),
+        _text("Original unsupported answer."),
+        _text("Still unsupported after revision."),
+    ])
+    with patch("agent.graph.complete", complete_mock), \
+         patch("agent.tools.retrieve.RetrieveTool.run", return_value=_retrieve_result()), \
+         patch("agent.graph._check_groundedness", side_effect=[_grounded_fail(), _grounded_fail()]):
+        result = run_graph("q", kb_id=1)
+
+    assert result["answer"] == "Still unsupported after revision."
+    assert result["grounded"] is False
+    assert result["verification_status"] == "rejected"
+    assert result["revision_count"] == 1
+
+
+def test_check_error_does_not_trigger_revision():
+    complete_mock = MagicMock(side_effect=[
+        _tool("retrieve", query="q"),
+        _text("Unchecked answer."),
+    ])
+    check_error = {
+        "supported": True,
+        "unsupported_sentences": [],
+        "verification_status": "check_error",
+    }
+    with patch("agent.graph.complete", complete_mock), \
+         patch("agent.tools.retrieve.RetrieveTool.run", return_value=_retrieve_result()), \
+         patch("agent.graph._check_groundedness", return_value=check_error):
+        result = run_graph("q", kb_id=1)
+
+    assert result["verification_status"] == "check_error"
+    assert result.get("revision_count", 0) == 0
+    assert complete_mock.call_count == 2
 
 
 # ── Boundary: max_turns wrap-up bypasses groundedness ─────────────────────────
@@ -155,4 +227,5 @@ def test_max_turns_wrap_up_skips_groundedness(monkeypatch):
 
     assert result["answer"] == "Wrap-up answer."
     assert result["grounded"] is None
+    assert result["verification_status"] == "unchecked_max_turns"
     groundedness_mock.assert_not_called()

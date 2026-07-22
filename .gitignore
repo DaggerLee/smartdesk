@@ -17,8 +17,9 @@ __pycache__/
 venv/
 .venv/
 
-# Database & vector store (runtime data — now lives in backend/data/)
+# Database, vector store, and checkpoint runtime data
 backend/data/
+/data/
 CLAUDE.local.md
 
 # Local job-search working docs (not for the public repo; docs/ reserved for public docs)

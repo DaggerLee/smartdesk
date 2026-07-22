@@ -213,7 +213,7 @@ def _classify(message: str) -> str:
 class GraphState(TypedDict, total=False):
     query: str
     kb_id: int
-    history: list  # Conversation ORM rows (rag path only), oldest first
+    history: list[dict[str, str]]  # Checkpoint-safe turns, oldest first
 
     route: str  # "direct" | "rag" | "agent"
 
@@ -221,6 +221,7 @@ class GraphState(TypedDict, total=False):
     messages: list[dict]
     evidence: list[dict]
     grounded: Optional[bool]
+    verification_status: str
 
     # agent path — self-healing mechanism state (W5 T2)
     turn: int                       # tool-call round counter, mirrors legacy AgentState.turn
@@ -301,7 +302,7 @@ def rag_node(state: GraphState) -> dict:
         pass
 
     elif msg_type in ("meta", "followup") and history:
-        rag_query = history[-1].question
+        rag_query = history[-1]["question"]
         results = chroma_client.query_documents(kb_id, rag_query, n_results=5)
         context_texts = [r["text"] for r in results]
         seen_files: set = set()
@@ -387,7 +388,13 @@ def llm_node(state: GraphState) -> dict:
         last["parts"] = [*last["parts"], {"text": _WRAP_UP_INSTRUCTION}]
         messages[-1] = last
         resp = complete(messages, tools=None, system=SYSTEM_PROMPT)
-        return {"messages": messages, "answer": resp.text or "", "grounded": None, "wrap_up": True}
+        return {
+            "messages": messages,
+            "answer": resp.text or "",
+            "grounded": None,
+            "verification_status": "unchecked_max_turns",
+            "wrap_up": True,
+        }
 
     tools_registry = _build_tools_registry(state["kb_id"])
     declarations = [tool.declaration for tool in tools_registry.values()]
@@ -409,7 +416,8 @@ def llm_node(state: GraphState) -> dict:
         messages.append(model_turn(resp))
         return {"messages": messages, "pending_tool_calls": resp.tool_calls}
 
-    return {"answer": resp.text or ""}
+    messages.append(model_turn(resp))
+    return {"messages": messages, "answer": resp.text or ""}
 
 
 def _llm_route_edge(state: GraphState) -> str:
@@ -551,12 +559,19 @@ def groundedness_node(state: GraphState) -> dict:
 
     with _trace_span({"type": "groundedness_check"}) as _t:
         grounded = _check_groundedness(answer, evidence)
+        status = grounded.get("verification_status")
+        if status is None:
+            status = "verified" if grounded["supported"] else "rejected"
         _t["supported"] = grounded["supported"]
         _t["unsupported_count"] = len(grounded["unsupported_sentences"])
         _t["unsupported_sentences"] = grounded["unsupported_sentences"]
+        _t["verification_status"] = status
 
-    if grounded["supported"] or revision_count >= _MAX_REVISIONS:
-        return {"grounded": grounded["supported"]}
+    if status != "rejected" or revision_count >= _MAX_REVISIONS:
+        return {
+            "grounded": grounded["supported"],
+            "verification_status": status,
+        }
 
     messages = list(state["messages"])
     unsupported_list = "\n".join(f"- {s}" for s in grounded["unsupported_sentences"])
@@ -567,6 +582,7 @@ def groundedness_node(state: GraphState) -> dict:
         "messages": messages,
         "revision_count": revision_count + 1,
         "pending_revision": True,
+        "verification_status": status,
     }
 
 
@@ -633,6 +649,20 @@ def build_graph(checkpointer=None):
 _compiled_graph = build_graph()
 
 
+def _serialize_history(history: list) -> list[dict[str, str]]:
+    """Convert database/history objects into checkpoint-safe plain data."""
+    serialized = []
+    for turn in history:
+        if isinstance(turn, dict):
+            question = turn["question"]
+            answer = turn["answer"]
+        else:
+            question = turn.question
+            answer = turn.answer
+        serialized.append({"question": question, "answer": answer})
+    return serialized
+
+
 def stream_graph(
     query: str,
     kb_id: int,
@@ -666,7 +696,11 @@ def stream_graph(
     module docstring).
     """
     config = {"configurable": {"thread_id": thread_id or uuid.uuid4().hex}}
-    initial_state: GraphState = {"query": query, "kb_id": kb_id, "history": history or []}
+    initial_state: GraphState = {
+        "query": query,
+        "kb_id": kb_id,
+        "history": _serialize_history(history or []),
+    }
     final_state: GraphState = dict(initial_state)  # type: ignore[assignment]
 
     for mode, chunk in _compiled_graph.stream(
