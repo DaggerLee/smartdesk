@@ -28,6 +28,7 @@ from agent.loop import SYSTEM_PROMPT, run_agent
 from agent.router import route
 from agent.write_action import ActionResolution
 from agent.write_note_policy import (
+    LEGACY_WRITE_UNAVAILABLE_NOTICE,
     classify_write_intent,
     is_hitl_write_note_enabled,
 )
@@ -341,11 +342,33 @@ def chat_stream(
 
     request_id = uuid.uuid4().hex[:12]
     _sse_headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    backend = os.getenv("SMARTDESK_AGENT_BACKEND", "legacy")
+
+    if (
+        backend == "legacy"
+        and is_hitl_write_note_enabled()
+        and classify_write_intent(body.message) == "persist"
+    ):
+        def generate_legacy_write_unavailable() -> Generator[str, None, None]:
+            db.add(Conversation(
+                kb_id=body.kb_id,
+                question=body.message,
+                answer=LEGACY_WRITE_UNAVAILABLE_NOTICE,
+            ))
+            db.commit()
+            yield _sse_json(LEGACY_WRITE_UNAVAILABLE_NOTICE)
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate_legacy_write_unavailable(),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     # ── LangGraph skeleton switch (default off — see agent/graph.py) ─────────
     # Off by default so production behaviour is byte-for-byte unchanged; the
     # legacy route()/run_agent()/inline-RAG-chain path below is the fallback.
-    if os.getenv("SMARTDESK_AGENT_BACKEND") == "langgraph":
+    if backend == "langgraph":
         def generate_langgraph() -> Generator[str, None, None]:
             with _trace_context(request_id=request_id):
                 # W5 T4: generated and held at the call site (not left to

@@ -5,6 +5,7 @@ from agent.delivery import (
     is_verified_delivery_enabled,
     select_delivery,
 )
+from agent.write_note_policy import LEGACY_WRITE_UNAVAILABLE_NOTICE
 
 
 def test_allowed_statuses_deliver_graph_answer():
@@ -36,6 +37,7 @@ def test_notice_literals_are_stable_and_excluded_from_context():
         "I couldn't provide an answer that was sufficiently supported by the available evidence."
     )
     assert NON_CONTEXT_ANSWERS == frozenset({
+        LEGACY_WRITE_UNAVAILABLE_NOTICE,
         RETRYABLE_VERIFICATION_NOTICE,
         UNSUPPORTED_ANSWER_NOTICE,
     })

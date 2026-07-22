@@ -6,6 +6,9 @@ import os
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from agent.write_note_policy import LEGACY_WRITE_UNAVAILABLE_NOTICE
+
+
 VerificationStatus = Literal[
     "verified",
     "not_applicable",
@@ -32,6 +35,7 @@ UNSUPPORTED_ANSWER_NOTICE = (
 # Released notice literals are immutable. If wording changes, add the new
 # literal and retain every old one so persisted notices never re-enter context.
 NON_CONTEXT_ANSWERS = frozenset({
+    LEGACY_WRITE_UNAVAILABLE_NOTICE,
     RETRYABLE_VERIFICATION_NOTICE,
     UNSUPPORTED_ANSWER_NOTICE,
 })
