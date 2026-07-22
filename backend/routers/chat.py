@@ -8,6 +8,7 @@ from typing import Generator, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import chroma_client
@@ -129,6 +130,67 @@ def _recent_usable_history(db: Session, kb_id: int) -> list[Conversation]:
 
 def _answer_sha256(answer: str) -> str:
     return hashlib.sha256(answer.encode("utf-8")).hexdigest()
+
+
+class ConversationThreadConflictError(RuntimeError):
+    """A thread ID is already bound to a different delivered conversation."""
+
+
+def _same_conversation(
+    conversation: Conversation,
+    *,
+    kb_id: int,
+    question: str,
+    answer: str,
+) -> bool:
+    return (
+        conversation.kb_id == kb_id
+        and conversation.question == question
+        and conversation.answer == answer
+    )
+
+
+def persist_conversation_once(
+    db: Session,
+    *,
+    thread_id: str,
+    kb_id: int,
+    question: str,
+    answer: str,
+) -> Conversation:
+    """Insert one delivered graph conversation or verify an exact replay."""
+    existing = db.query(Conversation).filter(
+        Conversation.thread_id == thread_id
+    ).one_or_none()
+    if existing is not None:
+        if _same_conversation(existing, kb_id=kb_id, question=question, answer=answer):
+            return existing
+        raise ConversationThreadConflictError("thread already has a different conversation")
+
+    conversation = Conversation(
+        kb_id=kb_id,
+        question=question,
+        answer=answer,
+        thread_id=thread_id,
+    )
+    db.add(conversation)
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        existing = db.query(Conversation).filter(
+            Conversation.thread_id == thread_id
+        ).one_or_none()
+        if existing is None:
+            raise error
+        if not _same_conversation(existing, kb_id=kb_id, question=question, answer=answer):
+            raise ConversationThreadConflictError(
+                "thread already has a different conversation"
+            ) from None
+        return existing
+    db.refresh(conversation)
+    return conversation
+
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 

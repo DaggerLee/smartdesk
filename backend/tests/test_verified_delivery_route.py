@@ -5,14 +5,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from agent.delivery import (
     RETRYABLE_VERIFICATION_NOTICE,
     UNSUPPORTED_ANSWER_NOTICE,
 )
 from agent.graph import GraphEvent
+from database import Base
 from llm.client import LLMResponse
+from models import Conversation
 from routers import chat
+from routers.chat import ConversationThreadConflictError, persist_conversation_once
 
 
 class _EmptyQuery:
@@ -275,3 +280,78 @@ def test_real_streaming_response_finishes_without_cross_context_trace_error(tmp_
         if '"agent_delivery"' in line
     )
     assert delivery_trace["request_id"]
+
+
+def _conversation_session(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'conversation.db'}")
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine)()
+
+
+def test_persist_conversation_once_inserts_one_thread_row(tmp_path):
+    db = _conversation_session(tmp_path)
+    try:
+        conversation = persist_conversation_once(
+            db,
+            thread_id="thread-1",
+            kb_id=4,
+            question="question",
+            answer="answer",
+        )
+
+        assert conversation.id is not None
+        assert conversation.thread_id == "thread-1"
+        assert db.query(Conversation).count() == 1
+    finally:
+        db.close()
+
+
+def test_persist_conversation_once_reuses_identical_completion(tmp_path):
+    db = _conversation_session(tmp_path)
+    try:
+        first = persist_conversation_once(
+            db,
+            thread_id="thread-1",
+            kb_id=4,
+            question="question",
+            answer="answer",
+        )
+        second = persist_conversation_once(
+            db,
+            thread_id="thread-1",
+            kb_id=4,
+            question="question",
+            answer="answer",
+        )
+
+        assert second.id == first.id
+        assert db.query(Conversation).count() == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"kb_id": 5, "question": "question", "answer": "answer"},
+        {"kb_id": 4, "question": "different", "answer": "answer"},
+        {"kb_id": 4, "question": "question", "answer": "different"},
+    ],
+)
+def test_persist_conversation_once_rejects_conflicting_completion(tmp_path, changed):
+    db = _conversation_session(tmp_path)
+    try:
+        persist_conversation_once(
+            db,
+            thread_id="thread-1",
+            kb_id=4,
+            question="question",
+            answer="answer",
+        )
+
+        with pytest.raises(ConversationThreadConflictError):
+            persist_conversation_once(db, thread_id="thread-1", **changed)
+
+        assert db.query(Conversation).count() == 1
+    finally:
+        db.close()
