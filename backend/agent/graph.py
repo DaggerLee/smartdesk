@@ -221,6 +221,7 @@ class GraphState(TypedDict, total=False):
     messages: list[dict]
     evidence: list[dict]
     grounded: Optional[bool]
+    verification_status: str
 
     # agent path — self-healing mechanism state (W5 T2)
     turn: int                       # tool-call round counter, mirrors legacy AgentState.turn
@@ -387,7 +388,13 @@ def llm_node(state: GraphState) -> dict:
         last["parts"] = [*last["parts"], {"text": _WRAP_UP_INSTRUCTION}]
         messages[-1] = last
         resp = complete(messages, tools=None, system=SYSTEM_PROMPT)
-        return {"messages": messages, "answer": resp.text or "", "grounded": None, "wrap_up": True}
+        return {
+            "messages": messages,
+            "answer": resp.text or "",
+            "grounded": None,
+            "verification_status": "unchecked_max_turns",
+            "wrap_up": True,
+        }
 
     tools_registry = _build_tools_registry(state["kb_id"])
     declarations = [tool.declaration for tool in tools_registry.values()]
@@ -551,12 +558,19 @@ def groundedness_node(state: GraphState) -> dict:
 
     with _trace_span({"type": "groundedness_check"}) as _t:
         grounded = _check_groundedness(answer, evidence)
+        status = grounded.get("verification_status")
+        if status is None:
+            status = "verified" if grounded["supported"] else "rejected"
         _t["supported"] = grounded["supported"]
         _t["unsupported_count"] = len(grounded["unsupported_sentences"])
         _t["unsupported_sentences"] = grounded["unsupported_sentences"]
+        _t["verification_status"] = status
 
-    if grounded["supported"] or revision_count >= _MAX_REVISIONS:
-        return {"grounded": grounded["supported"]}
+    if status != "rejected" or revision_count >= _MAX_REVISIONS:
+        return {
+            "grounded": grounded["supported"],
+            "verification_status": status,
+        }
 
     messages = list(state["messages"])
     unsupported_list = "\n".join(f"- {s}" for s in grounded["unsupported_sentences"])
@@ -567,6 +581,7 @@ def groundedness_node(state: GraphState) -> dict:
         "messages": messages,
         "revision_count": revision_count + 1,
         "pending_revision": True,
+        "verification_status": status,
     }
 
 

@@ -81,7 +81,11 @@ def check(answer: str, evidence: list[dict]) -> dict:
         in the trace entry so the failure is observable.
     """
     if not evidence:
-        return {"supported": True, "unsupported_sentences": []}
+        return {
+            "supported": True,
+            "unsupported_sentences": [],
+            "verification_status": "not_applicable",
+        }
 
     evidence_block = "\n\n".join(
         f"[{i + 1}] ({e.get('source', 'unknown')}) {e['text']}"
@@ -90,16 +94,16 @@ def check(answer: str, evidence: list[dict]) -> dict:
     prompt = f"EVIDENCE:\n{evidence_block}\n\nANSWER:\n{answer}"
 
     with _trace_span({"type": "groundedness_judge"}) as _t:
-        resp = complete(
-            messages=[{"role": "user", "parts": [{"text": prompt}]}],
-            tools=None,
-            system=_JUDGE_SYSTEM,
-            temperature=0,
-        )
         _t["answer_len"] = len(answer)
         _t["evidence_count"] = len(evidence)
 
         try:
+            resp = complete(
+                messages=[{"role": "user", "parts": [{"text": prompt}]}],
+                tools=None,
+                system=_JUDGE_SYSTEM,
+                temperature=0,
+            )
             raw = (resp.text or "").strip()
 
             # Strip markdown code fences: ```json\n...\n``` or ```\n...\n```
@@ -120,11 +124,20 @@ def check(answer: str, evidence: list[dict]) -> dict:
                 "supported": bool(parsed.get("supported", True)),
                 "unsupported_sentences": list(parsed.get("unsupported_sentences", [])),
             }
+            result["verification_status"] = (
+                "verified" if result["supported"] else "rejected"
+            )
             _t["supported"] = result["supported"]
             _t["unsupported_sentences"] = result["unsupported_sentences"]
+            _t["verification_status"] = result["verification_status"]
             return result
 
         except Exception as exc:
-            _t["parse_error"] = str(exc)
-            _t["raw_text_excerpt"] = (resp.text or "")[:300]
-            return {"supported": True, "unsupported_sentences": []}
+            _t["check_error"] = str(exc)
+            if "resp" in locals():
+                _t["raw_text_excerpt"] = (resp.text or "")[:300]
+            return {
+                "supported": True,
+                "unsupported_sentences": [],
+                "verification_status": "check_error",
+            }
