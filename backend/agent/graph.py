@@ -416,7 +416,8 @@ def llm_node(state: GraphState) -> dict:
         messages.append(model_turn(resp))
         return {"messages": messages, "pending_tool_calls": resp.tool_calls}
 
-    return {"answer": resp.text or ""}
+    messages.append(model_turn(resp))
+    return {"messages": messages, "answer": resp.text or ""}
 
 
 def _llm_route_edge(state: GraphState) -> str:

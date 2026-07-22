@@ -81,6 +81,31 @@ def test_normal_path_matches_legacy_outcome():
     assert complete_mock.call_count == 2  # retrieve round + final answer, no revision
 
 
+def test_zero_tool_agent_answer_preserves_model_turn_for_delivery():
+    response = LLMResponse(
+        text="Direct agent answer.",
+        tool_calls=[],
+        raw={
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "Direct agent answer."}],
+                }
+            }]
+        },
+    )
+
+    with patch("agent.graph.complete", return_value=response):
+        result = run_graph("hello", kb_id=1)
+
+    assert result["answer"] == "Direct agent answer."
+    assert result["messages"][-1] == {
+        "role": "model",
+        "parts": [{"text": "Direct agent answer."}],
+    }
+    assert result["verification_status"] == "not_applicable"
+
+
 # ── Mechanism 1: tool error retry ─────────────────────────────────────────────
 
 def test_tool_error_twice_injects_unavailable_notice():
