@@ -80,7 +80,7 @@
           <div class="avatar ai-avatar">🤖</div>
           <div class="ai-content">
             <div class="bubble ai-bubble" v-html="renderMessageContent(msg)"></div>
-            <div v-if="msg.streaming && msg.statusText" class="status-indicator">{{ msg.statusText }}</div>
+            <div v-if="msg.statusText" class="status-indicator">{{ msg.statusText }}</div>
             <!-- Sources -->
             <div v-if="msg.sources && msg.sources.length > 0" class="sources">
               <div class="sources-label">Sources</div>
@@ -144,6 +144,7 @@
 import { marked } from "marked";
 import { nextTick, ref, watch } from "vue";
 import { clearChatHistory, deleteFile, getChatHistory, listFiles, sendMessageStream } from "../api/index.js";
+import { settleTerminalMessage } from "./chatStreamState.js";
 import FileUpload from "./FileUpload.vue";
 
 const props = defineProps({
@@ -228,7 +229,19 @@ async function handleSend() {
       (status) => {
         const idx = messages.value.findIndex((m) => m.id === tempId);
         if (idx !== -1) messages.value[idx].statusText = status;
-      }
+      },
+      () => {
+        const idx = messages.value.findIndex((m) => m.id === tempId);
+        if (idx !== -1) {
+          settleTerminalMessage(messages.value[idx], "paused");
+        }
+      },
+      () => {
+        const idx = messages.value.findIndex((m) => m.id === tempId);
+        if (idx !== -1) {
+          settleTerminalMessage(messages.value[idx], "failed");
+        }
+      },
     );
   } catch (err) {
     const idx = messages.value.findIndex((m) => m.id === tempId);

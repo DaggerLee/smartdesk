@@ -6,12 +6,20 @@ logs. These tests assert that exceptions raised by the client never contain
 the API key in plaintext.
 """
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
 import requests
 
 import llm.client as client
+
+
+@contextmanager
+def _capture_span(entries: list[dict]):
+    entry: dict = {}
+    entries.append(entry)
+    yield entry
 
 
 def _fake_response(status: int, url: str) -> requests.Response:
@@ -130,3 +138,96 @@ def test_complete_gives_up_after_retry_budget_on_connection_error(monkeypatch):
             client.complete(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
 
     assert len(sleeps) == 5  # attempts 0-4 retry (5 sleeps), attempt 5 raises
+
+
+def test_complete_candidate_less_200_raises_safe_protocol_error(monkeypatch):
+    monkeypatch.setattr(client, "_model_validated", True)
+    monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
+    response = _fake_response(200, "https://example.com")
+    response._content = (
+        b'{"promptFeedback":{"blockReason":"OTHER"},'
+        b'"sensitiveBody":"DO_NOT_LOG_THIS"}'
+    )
+
+    traces: list[dict] = []
+    monkeypatch.setattr(client, "_trace_span", lambda _entry: _capture_span(traces))
+
+    with patch("llm.client.requests.post", return_value=response):
+        with pytest.raises(client.LLMProtocolError) as error:
+            client.complete(
+                messages=[{"role": "user", "parts": [{"text": "persist"}]}]
+            )
+
+    message = str(error.value)
+    assert "candidates" in message
+    assert "SECRET123" not in message
+    assert "DO_NOT_LOG_THIS" not in message
+    assert error.value.diagnostics == {
+        "candidate_count": 0,
+        "finish_reason": None,
+        "prompt_block_reason": "OTHER",
+        "content_present": False,
+        "parts_present": False,
+        "parts_count": 0,
+    }
+    assert traces == [{"protocol_error": error.value.diagnostics}]
+
+
+def test_complete_content_less_candidate_raises_safe_protocol_error(monkeypatch):
+    monkeypatch.setattr(client, "_model_validated", True)
+    monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
+    response = _fake_response(200, "https://example.com")
+    response._content = (
+        b'{"candidates":[{"finishReason":"STOP"}],'
+        b'"sensitiveBody":"DO_NOT_LOG_THIS"}'
+    )
+
+    traces: list[dict] = []
+    monkeypatch.setattr(client, "_trace_span", lambda _entry: _capture_span(traces))
+
+    with patch("llm.client.requests.post", return_value=response):
+        with pytest.raises(client.LLMProtocolError) as error:
+            client.complete(
+                messages=[{"role": "user", "parts": [{"text": "persist"}]}]
+            )
+
+    message = str(error.value)
+    assert "content" in message
+    assert "DO_NOT_LOG_THIS" not in message
+    assert "SECRET123" not in message
+    assert error.value.diagnostics == {
+        "candidate_count": 1,
+        "finish_reason": "STOP",
+        "prompt_block_reason": None,
+        "content_present": False,
+        "parts_present": False,
+        "parts_count": 0,
+    }
+    assert traces == [{"protocol_error": error.value.diagnostics}]
+
+
+def test_protocol_diagnostics_only_include_shape_metadata(monkeypatch):
+    monkeypatch.setattr(client, "_model_validated", True)
+    monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
+    response = _fake_response(200, "https://example.com")
+    response._content = (
+        b'{"candidates":[{"finishReason":"DO_NOT_LOG_FINISH"}],'
+        b'"promptFeedback":{"blockReason":"DO_NOT_LOG_BLOCK"},'
+        b'"sensitiveBody":"DO_NOT_LOG_THIS"}'
+    )
+    traces: list[dict] = []
+    monkeypatch.setattr(client, "_trace_span", lambda _entry: _capture_span(traces))
+
+    with patch("llm.client.requests.post", return_value=response):
+        with pytest.raises(client.LLMProtocolError) as error:
+            client.complete(
+                messages=[{"role": "user", "parts": [{"text": "SECRET NOTE BODY"}]}]
+            )
+
+    assert error.value.diagnostics["finish_reason"] == "UNKNOWN"
+    assert error.value.diagnostics["prompt_block_reason"] == "UNKNOWN"
+    serialized_trace = str(traces)
+    assert "SECRET NOTE BODY" not in serialized_trace
+    assert "DO_NOT_LOG_FINISH" not in serialized_trace
+    assert "DO_NOT_LOG_BLOCK" not in serialized_trace
+    assert "DO_NOT_LOG_THIS" not in serialized_trace

@@ -4,6 +4,18 @@ Revisions to `gold_set.jsonl` after the item itself was already scored — i.e.
 the label was wrong, not the system. Route/scoring bugs found in the
 harness or agent code are fixed in code, not here.
 
+## 2026-07-22 - HITL write-note protocol set
+
+- Added `hitl_gold_set.jsonl` as a separate deterministic protocol set rather
+  than mixing action lifecycle cases into the answer-keyword evaluation.
+- The 22 human-authored expectations cover English/Chinese persist and draft
+  intent, near negatives, ordinary knowledge intent, approve/edit/reject,
+  normal proposal, mixed/multiple-write rejection, summarize-and-save
+  receipt-only UX, and every terminal receipt result.
+- These rows define expected behavior from the frozen HITL design. They are
+  not model outputs and do not report precision, pass rate, or real-Gemini
+  evidence.
+
 ## 2026-07-11 — W4 error analysis (baseline e8dddab)
 
 - **a005**: `expected_route` agent → rag. Reasoning: the query asks the

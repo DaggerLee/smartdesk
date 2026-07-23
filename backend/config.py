@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 TOP_K: int = 5
@@ -10,8 +11,38 @@ CHUNK_OVERLAP: int = 100
 # queries always scored ~0.85-1.9 — relevance_ok was permanently ~0%).
 RELEVANCE_THRESHOLD: float = 0.62
 
+# ── Agent backend ─────────────────────────────────────────────────────────────
+AGENT_BACKEND_ENV_VAR: str = "SMARTDESK_AGENT_BACKEND"
+AGENT_BACKEND_DEFAULT: str = "langgraph"
+VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"legacy", "langgraph"})
+
+
+def get_agent_backend() -> str:
+    value = os.getenv(AGENT_BACKEND_ENV_VAR, AGENT_BACKEND_DEFAULT)
+    if value not in VALID_AGENT_BACKENDS:
+        raise ValueError(
+            "SMARTDESK_AGENT_BACKEND must be exactly 'legacy' or 'langgraph'"
+        )
+    return value
+
+
+# Validate at import/startup; request-time consumers call the same owner so a
+# later process-environment mutation cannot silently bypass validation.
+AGENT_BACKEND: str = get_agent_backend()
+
+
 # ── Agent loop ────────────────────────────────────────────────────────────────
 MAX_AGENT_TURNS: int = 5
+
+# Default cutover enables write-note HITL; the environment flag remains the rollback.
+HITL_WRITE_NOTE_ENV_VAR: str = "SMARTDESK_HITL_WRITE_NOTE"
+HITL_WRITE_NOTE_DEFAULT: bool = True
+
+# The Docker deployment mounts its persistent volume at /app/data. With /app
+# as the working directory, this relative default stays inside that volume.
+WRITE_NOTE_ROOT_ENV_VAR: str = "SMARTDESK_DATA_DIR"
+WRITE_NOTE_ROOT_DEFAULT: Path = Path("data")
+WRITE_NOTE_ROOT: Path = Path(os.getenv(WRITE_NOTE_ROOT_ENV_VAR, WRITE_NOTE_ROOT_DEFAULT))
 
 # ── LLM / Gemini ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

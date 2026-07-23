@@ -35,6 +35,66 @@ class LLMResponse:
     tool_calls: list[ToolCall] # non-empty when the model returns functionCall parts
     raw: dict                  # full API response, used by trace logger
 
+class LLMProtocolError(RuntimeError):
+    """Gemini returned a successful HTTP response with an unusable schema."""
+
+    def __init__(self, message: str, diagnostics: dict | None = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
+
+
+_FINISH_REASONS = {
+    "STOP",
+    "MAX_TOKENS",
+    "SAFETY",
+    "RECITATION",
+    "LANGUAGE",
+    "OTHER",
+    "BLOCKLIST",
+    "PROHIBITED_CONTENT",
+    "SPII",
+    "MALFORMED_FUNCTION_CALL",
+    "IMAGE_SAFETY",
+    "UNEXPECTED_TOOL_CALL",
+    "NO_IMAGE",
+}
+_BLOCK_REASONS = {
+    "BLOCK_REASON_UNSPECIFIED",
+    "SAFETY",
+    "OTHER",
+    "BLOCKLIST",
+    "PROHIBITED_CONTENT",
+    "IMAGE_SAFETY",
+}
+
+
+def _safe_enum(value: object, allowed: set[str]) -> str | None:
+    if value is None:
+        return None
+    return value if isinstance(value, str) and value in allowed else "UNKNOWN"
+
+
+def _protocol_diagnostics(data: object) -> dict:
+    root = data if isinstance(data, dict) else {}
+    candidates = root.get("candidates")
+    candidate_list = candidates if isinstance(candidates, list) else []
+    candidate = candidate_list[0] if candidate_list and isinstance(candidate_list[0], dict) else {}
+    content = candidate.get("content")
+    content_dict = content if isinstance(content, dict) else {}
+    parts = content_dict.get("parts")
+    parts_list = parts if isinstance(parts, list) else []
+    prompt_feedback = root.get("promptFeedback")
+    feedback_dict = prompt_feedback if isinstance(prompt_feedback, dict) else {}
+    return {
+        "candidate_count": len(candidate_list),
+        "finish_reason": _safe_enum(candidate.get("finishReason"), _FINISH_REASONS),
+        "prompt_block_reason": _safe_enum(feedback_dict.get("blockReason"), _BLOCK_REASONS),
+        "content_present": isinstance(content, dict),
+        "parts_present": isinstance(parts, list),
+        "parts_count": len(parts_list),
+    }
+
+
 
 # ── Secret hygiene ────────────────────────────────────────────────────────────
 
@@ -219,7 +279,24 @@ def complete(
             break
         data = resp.json()
 
-        parts = data["candidates"][0]["content"].get("parts", [])
+        candidates = data.get("candidates") if isinstance(data, dict) else None
+        if not isinstance(candidates, list) or not candidates:
+            diagnostics = _protocol_diagnostics(data)
+            _out["protocol_error"] = diagnostics
+            raise LLMProtocolError(
+                "Gemini response schema invalid: candidates missing or empty",
+                diagnostics,
+            )
+        candidate = candidates[0]
+        content = candidate.get("content") if isinstance(candidate, dict) else None
+        if not isinstance(content, dict):
+            diagnostics = _protocol_diagnostics(data)
+            _out["protocol_error"] = diagnostics
+            raise LLMProtocolError(
+                "Gemini response schema invalid: candidate content missing",
+                diagnostics,
+            )
+        parts = content.get("parts", [])
 
         tool_calls = [
             ToolCall(name=p["functionCall"]["name"], args=p["functionCall"].get("args", {}))

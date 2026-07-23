@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, Index, Integer, String, Text, text
 
 from database import Base
 
@@ -32,6 +32,17 @@ class Conversation(Base):
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    thread_id = Column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_conversations_thread_id_unique",
+            "thread_id",
+            unique=True,
+            sqlite_where=text("thread_id IS NOT NULL"),
+        ),
+    )
+
 
 
 class UploadedFile(Base):

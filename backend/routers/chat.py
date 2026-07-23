@@ -1,6 +1,5 @@
 import hashlib
 import json
-import os
 import re
 import uuid
 from typing import Generator, List, Optional
@@ -8,17 +7,31 @@ from typing import Generator, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import chroma_client
+from config import get_agent_backend
+from agent.action_locks import action_lock
 from agent.delivery import (
     NON_CONTEXT_ANSWERS,
     is_verified_delivery_enabled,
     select_delivery,
 )
-from agent.graph import stream_graph
+from agent.graph import (
+    GraphEvent,
+    get_graph_snapshot,
+    resume_graph_action,
+    stream_graph,
+)
 from agent.loop import SYSTEM_PROMPT, run_agent
 from agent.router import route
+from agent.write_action import ActionResolution
+from agent.write_note_policy import (
+    LEGACY_WRITE_UNAVAILABLE_NOTICE,
+    classify_write_intent,
+    is_hitl_write_note_enabled,
+)
 from auth import get_current_user
 from database import SessionLocal, get_db
 from gemini_client import generate_answer_stream
@@ -47,6 +60,19 @@ class HistoryItem(BaseModel):
     answer: str
     created_at: str
 
+
+def _sse_json(payload) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+def _stream_graph_with_proposal_failure(*args, **kwargs):
+    try:
+        yield from stream_graph(*args, **kwargs)
+    except Exception:
+        query = args[0]
+        if is_hitl_write_note_enabled() and classify_write_intent(query) == "persist":
+            yield GraphEvent(type="proposal_failed", data={})
+            return
+        raise
 
 # ── Message classification ────────────────────────────────────────────────────
 
@@ -130,6 +156,177 @@ def _recent_usable_history(db: Session, kb_id: int) -> list[Conversation]:
 def _answer_sha256(answer: str) -> str:
     return hashlib.sha256(answer.encode("utf-8")).hexdigest()
 
+
+class ConversationThreadConflictError(RuntimeError):
+    """A thread ID is already bound to a different delivered conversation."""
+
+
+def _same_conversation(
+    conversation: Conversation,
+    *,
+    kb_id: int,
+    question: str,
+    answer: str,
+) -> bool:
+    return (
+        conversation.kb_id == kb_id
+        and conversation.question == question
+        and conversation.answer == answer
+    )
+
+
+def persist_conversation_once(
+    db: Session,
+    *,
+    thread_id: str,
+    kb_id: int,
+    question: str,
+    answer: str,
+) -> Conversation:
+    """Insert one delivered graph conversation or verify an exact replay."""
+    existing = db.query(Conversation).filter(
+        Conversation.thread_id == thread_id
+    ).one_or_none()
+    if existing is not None:
+        if _same_conversation(existing, kb_id=kb_id, question=question, answer=answer):
+            return existing
+        raise ConversationThreadConflictError("thread already has a different conversation")
+
+    conversation = Conversation(
+        kb_id=kb_id,
+        question=question,
+        answer=answer,
+        thread_id=thread_id,
+    )
+    db.add(conversation)
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        existing = db.query(Conversation).filter(
+            Conversation.thread_id == thread_id
+        ).one_or_none()
+        if existing is None:
+            raise error
+        if not _same_conversation(existing, kb_id=kb_id, question=question, answer=answer):
+            raise ConversationThreadConflictError(
+                "thread already has a different conversation"
+            ) from None
+        return existing
+    db.refresh(conversation)
+    return conversation
+
+
+def _resolution_matches(pending: dict, resolution: ActionResolution) -> bool:
+    if pending.get("action_id") != resolution.action_id:
+        return False
+    if pending.get("decision") != resolution.decision:
+        return False
+    if resolution.decision == "approve":
+        return pending.get("approved_payload") == pending.get("original_payload")
+    if resolution.decision == "edit":
+        return pending.get("approved_payload") == {
+            "title": resolution.title,
+            "content": resolution.content,
+        }
+    return pending.get("reject_reason") == resolution.reason
+
+
+def _raise_for_file_conflict(receipt: dict) -> None:
+    if receipt.get("result") == "conflict":
+        raise HTTPException(status_code=409, detail="Action file conflicts")
+
+
+def _action_frames(
+    thread_id: str,
+    resolution: ActionResolution,
+    current_user_id: int,
+) -> list[str]:
+    with action_lock(thread_id):
+        snapshot = get_graph_snapshot(thread_id)
+        pending = snapshot.get("pending_action") if snapshot else None
+        if not pending or pending.get("user_id") != current_user_id:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if pending.get("action_id") != resolution.action_id:
+            raise HTTPException(status_code=404, detail="Action not found")
+
+        frames: list[str] = []
+        receipt = pending.get("receipt")
+        if receipt:
+            if not _resolution_matches(pending, resolution):
+                raise HTTPException(status_code=409, detail="Action resolution conflicts")
+            _raise_for_file_conflict(receipt)
+            frames.append(_sse_json({"action_result": receipt}))
+            final_state = snapshot
+        else:
+            try:
+                final_state = None
+                for event in resume_graph_action(thread_id, resolution):
+                    if event.type == "final":
+                        final_state = event.data
+                committed = get_graph_snapshot(thread_id)
+                committed_receipt = (
+                    committed.get("pending_action", {}).get("receipt")
+                    if committed
+                    else None
+                )
+                if committed_receipt is None:
+                    raise RuntimeError("action result checkpoint is unavailable")
+                _raise_for_file_conflict(committed_receipt)
+                frames.append(_sse_json({"action_result": committed_receipt}))
+                final_state = committed
+            except HTTPException:
+                raise
+            except Exception:
+                frames.append(_sse_json({"error": {"stage": "action_result"}}))
+                frames.append("data: [FAILED]\n\n")
+                return frames
+
+        answer = final_state.get("answer", "")
+        if final_state.get("verification_source") != "action_receipt" or not answer:
+            frames.append(_sse_json({"error": {"stage": "action_result"}}))
+            frames.append("data: [FAILED]\n\n")
+            return frames
+
+        db = SessionLocal()
+        try:
+            persist_conversation_once(
+                db,
+                thread_id=thread_id,
+                kb_id=final_state["kb_id"],
+                question=final_state["query"],
+                answer=answer,
+            )
+        except ConversationThreadConflictError as error:
+            raise HTTPException(
+                status_code=409, detail="Conversation completion conflicts"
+            ) from error
+        except Exception:
+            frames.append(_sse_json({"error": {"stage": "conversation"}}))
+            frames.append("data: [FAILED]\n\n")
+            return frames
+        finally:
+            db.close()
+
+        frames.append(_sse_json(answer))
+        frames.append("data: [DONE]\n\n")
+        return frames
+
+
+@router.post("/actions/{thread_id}/resolve")
+def resolve_action(
+    thread_id: str,
+    resolution: ActionResolution,
+    current_user: User = Depends(get_current_user),
+):
+    frames = _action_frames(thread_id, resolution, current_user.id)
+    return StreamingResponse(
+        iter(frames),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/stream")
@@ -145,11 +342,33 @@ def chat_stream(
 
     request_id = uuid.uuid4().hex[:12]
     _sse_headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    backend = get_agent_backend()
+
+    if (
+        backend == "legacy"
+        and is_hitl_write_note_enabled()
+        and classify_write_intent(body.message) == "persist"
+    ):
+        def generate_legacy_write_unavailable() -> Generator[str, None, None]:
+            db.add(Conversation(
+                kb_id=body.kb_id,
+                question=body.message,
+                answer=LEGACY_WRITE_UNAVAILABLE_NOTICE,
+            ))
+            db.commit()
+            yield _sse_json(LEGACY_WRITE_UNAVAILABLE_NOTICE)
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate_legacy_write_unavailable(),
+            media_type="text/event-stream",
+            headers=_sse_headers,
+        )
 
     # ── LangGraph skeleton switch (default off — see agent/graph.py) ─────────
     # Off by default so production behaviour is byte-for-byte unchanged; the
     # legacy route()/run_agent()/inline-RAG-chain path below is the fallback.
-    if os.getenv("SMARTDESK_AGENT_BACKEND") == "langgraph":
+    if backend == "langgraph":
         def generate_langgraph() -> Generator[str, None, None]:
             with _trace_context(request_id=request_id):
                 # W5 T4: generated and held at the call site (not left to
@@ -164,8 +383,12 @@ def chat_stream(
                 print(f"[Chat] LangGraph thread_id={thread_id}")
                 recent_history = _recent_usable_history(db, body.kb_id)
                 final_state: dict = {}
-                for event in stream_graph(
-                    body.message, body.kb_id, history=list(reversed(recent_history)), thread_id=thread_id
+                for event in _stream_graph_with_proposal_failure(
+                    body.message,
+                    body.kb_id,
+                    history=list(reversed(recent_history)),
+                    thread_id=thread_id,
+                    user_id=current_user.id,
                 ):
                     if event.type == "tool_call":
                         name = event.data["name"]
@@ -173,6 +396,16 @@ def chat_stream(
                         yield f"data: {json.dumps({'status': label}, ensure_ascii=False)}\n\n"
                     elif event.type == "chunk":
                         yield f"data: {json.dumps(event.data['text'], ensure_ascii=False)}\n\n"
+                    elif event.type == "confirmation_required":
+                        yield _sse_json(
+                            {"confirmation_required": {"thread_id": thread_id, **event.data}}
+                        )
+                        yield "data: [PAUSED]\n\n"
+                        return
+                    elif event.type == "proposal_failed":
+                        yield _sse_json({"error": {"stage": "proposal"}})
+                        yield "data: [FAILED]\n\n"
+                        return
                     elif event.type == "final":
                         final_state = event.data
 
@@ -202,8 +435,13 @@ def chat_stream(
 
                     _db = SessionLocal()
                     try:
-                        _db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
-                        _db.commit()
+                        persist_conversation_once(
+                            _db,
+                            thread_id=thread_id,
+                            kb_id=body.kb_id,
+                            question=body.message,
+                            answer=answer,
+                        )
                     finally:
                         _db.close()
 
@@ -243,8 +481,13 @@ def chat_stream(
                         if all_sources:
                             yield f"data: {json.dumps({'sources': all_sources}, ensure_ascii=False)}\n\n"
 
-                    db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
-                    db.commit()
+                    persist_conversation_once(
+                        db,
+                        thread_id=thread_id,
+                        kb_id=body.kb_id,
+                        question=body.message,
+                        answer=answer,
+                    )
 
                 yield "data: [DONE]\n\n"
         return StreamingResponse(

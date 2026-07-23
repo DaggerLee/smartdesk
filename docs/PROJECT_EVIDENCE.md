@@ -52,3 +52,24 @@ This append-only log records verified engineering outcomes that can be traced to
 - One paired rollout showed post-graph answer generation decrease from one call to zero. Its latency comparison is a single paired observation, not a statistical result.
 
 **Limitations:** The feature flag remains off. The initial empty-KB rollout produced fallback notices in three of four enabled requests; a populated-KB diagnostic produced two verified answers, one max-turn fallback, and one evidence rejection. Exact token cost is unknown.
+
+## EV-004 — HITL write-note real-model closure
+
+**Problem:** Deterministic mocks could not prove that the configured Gemini model would route an explicit persistence request to the agent and emit a protocol-valid `write_note` function call.
+
+**Delivered:** A graph-only, API-driven approval flow now pauses before side effects, accepts a strict structured approval, writes one per-user Markdown file atomically, verifies it by reading it back, and derives the delivered and persisted answer only from the committed receipt.
+
+**Evidence:**
+
+- Deterministic backend suite: 243 tests passed; frontend terminal handling: 5 tests passed; Vite production build: 73 modules transformed.
+- Real smoke run `task10-7f977ca0f9b5` used the preregistered Chinese persistence query with LangGraph and HITL enabled.
+- The live request sequence was one `ListModels` request and exactly two `generateContent` requests: router plus tool proposal. No retry or post-receipt model call occurred.
+- The router selected `agent`; the graph emitted `PAUSED` before any Markdown file existed; structured `approve` resumed the stable action ID.
+- The receipt reported `succeeded` and read-back verification. The published file was 72 bytes and its independently measured SHA-256 matched the receipt.
+- The canonical receipt answer was byte-identical to the single persisted Conversation answer.
+- Docker run `task10-181d4f7e5b84` used the same preregistered query and request budget after the safe protocol diagnostics commit `fbc992c`.
+- The Docker request sequence was one `ListModels` plus exactly two `generateContent` requests, with no retry or post-receipt Gemini call.
+- The terminal checkpoint recorded `succeeded`; the per-user volume file was 72 bytes and its independently reread SHA-256 matched the receipt.
+- An API-only idempotent resolve read back the committed receipt without a model call and returned HTTP 200, `succeeded`, the canonical answer, and `[DONE]`; checkpoint, delivered answer, and Conversation were identical.
+
+**Limitations:** These are one local and one Docker stochastic real-model success, not a three-run evaluation. Token and monetary cost are unknown. Two earlier bounded Docker attempts returned HTTP 200 without usable router candidate content and stopped before proposal with zero file writes. The successful Docker run's first verifier incorrectly omitted the server-owned `users/{user_id}` directory when locating the file and therefore recorded a harness failure; the preserved checkpoint, file, receipt, Conversation, and idempotent SSE readback independently verify product closure. Browser UX remains unverified, and production defaults remain legacy with HITL disabled.

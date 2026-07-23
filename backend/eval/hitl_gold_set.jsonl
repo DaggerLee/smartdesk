@@ -1,0 +1,22 @@
+{"id":"h001","kind":"intent","language":"en","query":"Save this summary as a note file.","expected_intent":"persist"}
+{"id":"h002","kind":"intent","language":"zh","query":"把这份总结保存成 Markdown 笔记文件。","expected_intent":"persist"}
+{"id":"h003","kind":"intent","language":"en","query":"Draft a note, but do not save it.","expected_intent":"draft"}
+{"id":"h004","kind":"intent","language":"zh","query":"帮我写一份笔记草稿，不要保存。","expected_intent":"draft"}
+{"id":"h005","kind":"intent","language":"en","query":"record this","expected_intent":"none"}
+{"id":"h006","kind":"intent","language":"en","query":"remember this","expected_intent":"none"}
+{"id":"h007","kind":"intent","language":"en","query":"note that the deadline is Friday","expected_intent":"none"}
+{"id":"h008","kind":"intent","language":"zh","query":"记录一下","expected_intent":"none"}
+{"id":"h009","kind":"intent","language":"zh","query":"记住这个","expected_intent":"none"}
+{"id":"h010","kind":"intent","language":"en","query":"What is MCP?","expected_intent":"none"}
+{"id":"h011","kind":"resolution","decision":"approve","expected_status":"succeeded","uses_original_payload":true}
+{"id":"h012","kind":"resolution","decision":"edit","expected_status":"succeeded","uses_complete_edited_payload":true}
+{"id":"h013","kind":"resolution","decision":"reject","expected_status":"rejected","filesystem_change":false}
+{"id":"h014","kind":"protocol","scenario":"normal_write_proposal","expected_terminal":"paused","expected_tool":"write_note"}
+{"id":"h015","kind":"protocol","scenario":"mixed_read_write","expected_terminal":"bounded_protocol_error","tools_executed":0}
+{"id":"h016","kind":"protocol","scenario":"multiple_write","expected_terminal":"bounded_protocol_error","tools_executed":0}
+{"id":"h017","kind":"protocol","scenario":"summarize_and_save","expected_chat":"receipt_only","expected_file":"generated_summary"}
+{"id":"h018","kind":"receipt","result":"succeeded","expected_delivery":"canonical_receipt"}
+{"id":"h019","kind":"receipt","result":"replayed","expected_delivery":"canonical_receipt"}
+{"id":"h020","kind":"receipt","result":"rejected","expected_delivery":"canonical_receipt"}
+{"id":"h021","kind":"receipt","result":"conflict","expected_delivery":"canonical_receipt"}
+{"id":"h022","kind":"receipt","result":"failed","expected_delivery":"canonical_receipt"}

@@ -120,6 +120,8 @@ from typing import Generator, Optional, TypedDict
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
+from pydantic import TypeAdapter, ValidationError
 
 import chroma_client
 from agent.groundedness import check as _check_groundedness
@@ -136,7 +138,21 @@ from agent.loop import (
 from agent.router import route
 from agent.tools.retrieve import RetrieveTool
 from agent.tools.web_search import WebSearchTool
-from config import CHECKPOINT_DB_PATH, MAX_AGENT_TURNS
+from agent.tools.write_note import WriteNoteTool
+from agent.write_action import (
+    ActionReceipt,
+    ActionResolution,
+    PendingAction,
+    render_action_answer,
+    to_action_evidence,
+    validate_write_note_payload,
+)
+from agent.write_note_policy import (
+    WRITE_NOTE_POLICY,
+    classify_write_intent,
+    is_hitl_write_note_enabled,
+)
+from config import CHECKPOINT_DB_PATH, MAX_AGENT_TURNS, WRITE_NOTE_ROOT
 from gemini_client import generate_answer_stream
 from llm.client import complete, model_turn, stream as llm_stream
 from llm.trace import span as _trace_span, write as _trace_write
@@ -222,6 +238,13 @@ class GraphState(TypedDict, total=False):
     evidence: list[dict]
     grounded: Optional[bool]
     verification_status: str
+    verification_source: str
+    user_id: int
+    thread_id: str
+    write_intent: str
+    pending_action: dict
+    write_action_seen: bool
+    invalid_write_round: bool
 
     # agent path — self-healing mechanism state (W5 T2)
     turn: int                       # tool-call round counter, mirrors legacy AgentState.turn
@@ -278,15 +301,10 @@ def rag_node(state: GraphState) -> dict:
     web/weather fallback -> generate_answer_stream), calling the same
     underlying functions chat.py calls.
 
-    Streams each raw chunk through get_stream_writer() as it arrives, same as
-    direct_node — one-stage streaming, no graph-side buffering. [SOURCE_USED]/
-    [WEB_USED] marker detection (used_docs/used_web) happens here, on the raw
-    joined text, before stripping — mirroring where chat.py's legacy generate()
-    does the same detection+strip on its own joined chunks. Doing it in the
-    node keeps that business logic where the rest of the RAG chain logic
-    already lives (see module docstring's "known duplication" note); the SSE
-    layer only reads used_docs/used_web + doc_sources/web_results to decide
-    whether to emit a sources frame, it doesn't re-derive them.
+    Buffers the RAG answer long enough to remove private source markers before
+    emitting one clean SSE chunk. Marker detection stays on the raw joined
+    text before stripping, keeping delivered text byte-identical to the clean
+    persisted answer. Direct replies retain live token streaming.
     """
     query = state["query"]
     kb_id = state["kb_id"]
@@ -344,12 +362,12 @@ def rag_node(state: GraphState) -> dict:
     raw_chunks: list[str] = []
     for chunk in generate_answer_stream(query, context_texts, history, web_results or None, msg_type):
         raw_chunks.append(chunk)
-        writer({"kind": "chunk", "text": chunk})
     raw_answer = "".join(raw_chunks)
 
     used_docs = "[SOURCE_USED]" in raw_answer
     used_web = "[WEB_USED]" in raw_answer
     clean_answer = raw_answer.replace("[SOURCE_USED]", "").replace("[WEB_USED]", "").rstrip()
+    writer({"kind": "chunk", "text": clean_answer})
 
     return {
         "msg_type": msg_type,
@@ -364,6 +382,69 @@ def rag_node(state: GraphState) -> dict:
 
 def _build_tools_registry(kb_id: int) -> dict:
     return {"retrieve": RetrieveTool(kb_id=kb_id), "web_search": WebSearchTool()}
+
+
+_WRITE_NOTE_DECLARATION = {
+    "name": "write_note",
+    "description": "Propose saving a Markdown note for explicit user approval.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "content": {"type": "string"},
+        },
+        "required": ["title", "content"],
+    },
+}
+
+
+def _write_protocol_failure(
+    state: GraphState,
+    messages: list[dict],
+    resp,
+) -> dict:
+    tool_fail_counts = dict(state.get("tool_fail_counts") or {})
+    failure_count = tool_fail_counts.get("write_protocol", 0) + 1
+    tool_fail_counts["write_protocol"] = failure_count
+    error = (
+        "The write_note tool-call round was invalid. No tools were executed. "
+        "Retry with exactly one write_note call containing only a valid title and content."
+    )
+    updated_messages = list(messages)
+    updated_messages.append(model_turn(resp))
+    updated_messages.append(
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": tc.name,
+                        "response": {"error": error},
+                    }
+                }
+                for tc in resp.tool_calls
+            ],
+        }
+    )
+    _trace_write(
+        {
+            "type": "tool_error",
+            "tool": "write_protocol",
+            "fail_count": failure_count,
+            "unavailable": failure_count >= _MAX_TOOL_FAILURES,
+        }
+    )
+    capped = failure_count >= _MAX_TOOL_FAILURES
+    return {
+        "messages": updated_messages,
+        "pending_tool_calls": None,
+        "tool_fail_counts": tool_fail_counts,
+        "invalid_write_round": not capped,
+        "wrap_up": capped,
+        "answer": error if capped else "",
+        "verification_status": "rejected" if capped else "pending",
+        "verification_source": None,
+    }
 
 
 def llm_node(state: GraphState) -> dict:
@@ -398,9 +479,40 @@ def llm_node(state: GraphState) -> dict:
 
     tools_registry = _build_tools_registry(state["kb_id"])
     declarations = [tool.declaration for tool in tools_registry.values()]
-    resp = complete(messages, tools=declarations, system=SYSTEM_PROMPT)
+    write_enabled = (
+        is_hitl_write_note_enabled()
+        and state.get("write_intent") == "persist"
+        and bool(state.get("user_id"))
+        and not state.get("write_action_seen", False)
+    )
+    if write_enabled:
+        declarations.append(_WRITE_NOTE_DECLARATION)
+    system_prompt = SYSTEM_PROMPT + ("\n" + WRITE_NOTE_POLICY if write_enabled else "")
+    resp = complete(messages, tools=declarations, system=system_prompt)
 
     if resp.tool_calls:
+        write_calls = [tc for tc in resp.tool_calls if tc.name == "write_note"]
+        if write_calls and not (len(resp.tool_calls) == 1 and len(write_calls) == 1):
+            return _write_protocol_failure(state, messages, resp)
+        if len(resp.tool_calls) == 1 and len(write_calls) == 1:
+            call = write_calls[0]
+            try:
+                payload = validate_write_note_payload(**call.args)
+            except (ValidationError, TypeError):
+                return _write_protocol_failure(state, messages, resp)
+            messages.append(model_turn(resp))
+            pending = PendingAction(
+                action_id=uuid.uuid4().hex,
+                user_id=state["user_id"],
+                original_payload=payload,
+            )
+            return {
+                "messages": messages,
+                "pending_tool_calls": None,
+                "pending_action": pending.model_dump(),
+                "write_action_seen": True,
+                "invalid_write_round": False,
+            }
         # Emit one "tool_call" custom event per call, before any of them run —
         # same timing as run_agent()'s yield AgentEvent(type="tool_call", ...),
         # which happens per-tc before that tc's tool.run(). tool_node executes
@@ -414,10 +526,18 @@ def llm_node(state: GraphState) -> dict:
         # Echo the model turn verbatim (raw parts keep the thoughtSignature
         # that gemini-3.5+ requires on replayed functionCall history).
         messages.append(model_turn(resp))
-        return {"messages": messages, "pending_tool_calls": resp.tool_calls}
+        return {
+            "messages": messages,
+            "pending_tool_calls": resp.tool_calls,
+            "invalid_write_round": False,
+        }
 
     messages.append(model_turn(resp))
-    return {"messages": messages, "answer": resp.text or ""}
+    return {
+        "messages": messages,
+        "answer": resp.text or "",
+        "invalid_write_round": False,
+    }
 
 
 def _llm_route_edge(state: GraphState) -> str:
@@ -426,10 +546,14 @@ def _llm_route_edge(state: GraphState) -> str:
     whether the check happens, only llm_node's own tool-calls-vs-text /
     wrap_up shape determines which branch is taken.
     """
+    if (state.get("pending_action") or {}).get("status") == "proposed":
+        return "approval_gate"
     if state.get("pending_tool_calls"):
         return "tool_node"
     if state.get("wrap_up"):
         return END
+    if state.get("invalid_write_round"):
+        return "llm_node"
     return "groundedness_node"
 
 
@@ -521,6 +645,110 @@ def _tool_route_edge(state: GraphState) -> str:
     return "rewrite_node" if state.get("pending_rewrite") else "llm_node"
 
 
+def approval_gate(state: GraphState) -> dict:
+    pending = state["pending_action"]
+    raw_resolution = interrupt(
+        {
+            "action_id": pending["action_id"],
+            "tool": pending["tool"],
+            "title": pending["original_payload"]["title"],
+            "content": pending["original_payload"]["content"],
+        }
+    )
+    resolution = TypeAdapter(ActionResolution).validate_python(raw_resolution)
+    if resolution.action_id != pending["action_id"]:
+        raise ValueError("resolution action_id does not match pending action")
+
+    updated = dict(pending)
+    updated["decision"] = resolution.decision
+    if resolution.decision == "reject":
+        receipt = ActionReceipt(action_id=pending["action_id"], result="rejected")
+        updated.update(
+            status="rejected",
+            reject_reason=resolution.reason,
+            approved_payload=None,
+            receipt=receipt.model_dump(),
+        )
+        return {
+            "pending_action": updated,
+            "messages": _append_action_response(state["messages"], receipt),
+        }
+
+    if resolution.decision == "approve":
+        approved = validate_write_note_payload(**pending["original_payload"])
+    else:
+        approved = validate_write_note_payload(
+            title=resolution.title,
+            content=resolution.content,
+        )
+    updated.update(
+        status="approved",
+        approved_payload=approved.model_copy(deep=True).model_dump(),
+        reject_reason=None,
+    )
+    return {"pending_action": updated}
+
+
+def _append_action_response(messages: list[dict], receipt: ActionReceipt) -> list[dict]:
+    updated = list(messages)
+    updated.append(
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "write_note",
+                        "response": receipt.model_dump(),
+                    }
+                }
+            ],
+        }
+    )
+    return updated
+
+
+def _approval_route_edge(state: GraphState) -> str:
+    status = state["pending_action"]["status"]
+    return "action_finalize_node" if status == "rejected" else "write_action_node"
+
+
+def write_action_node(state: GraphState) -> dict:
+    pending = dict(state["pending_action"])
+    approved = pending["approved_payload"]
+    receipt = WriteNoteTool(
+        user_id=pending["user_id"],
+        action_id=pending["action_id"],
+        notes_root=WRITE_NOTE_ROOT,
+    ).run(title=approved["title"], content=approved["content"])
+    pending.update(status=receipt.result, receipt=receipt.model_dump())
+    return {
+        "pending_action": pending,
+        "messages": _append_action_response(state["messages"], receipt),
+    }
+
+
+def action_finalize_node(state: GraphState) -> dict:
+    pending = state["pending_action"]
+    receipt = ActionReceipt.model_validate(pending["receipt"])
+    if receipt.result in {"succeeded", "replayed"} and not (
+        receipt.read_back_verified
+        and receipt.relative_path
+        and receipt.content_hash
+        and receipt.byte_count is not None
+    ):
+        raise ValueError("write receipt is not deterministically verified")
+    evidence = to_action_evidence(receipt)
+    _trace_write(evidence)
+    language = "zh" if re.search(r"[\u4e00-\u9fff]", state["query"]) else "en"
+    return {
+        "answer": render_action_answer(receipt, language=language),
+        "evidence": [evidence],
+        "verification_status": "verified",
+        "verification_source": "action_receipt",
+        "grounded": True,
+    }
+
+
 def rewrite_node(state: GraphState) -> dict:
     """Mechanism 2: low-relevance retrieval → rewrite hint (capped at
     _MAX_REWRITES). Appends the hint to the functionResponse turn tool_node
@@ -571,6 +799,7 @@ def groundedness_node(state: GraphState) -> dict:
         return {
             "grounded": grounded["supported"],
             "verification_status": status,
+            "verification_source": "llm_groundedness",
         }
 
     messages = list(state["messages"])
@@ -583,6 +812,7 @@ def groundedness_node(state: GraphState) -> dict:
         "revision_count": revision_count + 1,
         "pending_revision": True,
         "verification_status": status,
+        "verification_source": "llm_groundedness",
     }
 
 
@@ -614,8 +844,11 @@ def build_graph(checkpointer=None):
     graph.add_node("rag", rag_node)
     graph.add_node("llm_node", llm_node)
     graph.add_node("tool_node", tool_node)
+    graph.add_node("approval_gate", approval_gate)
     graph.add_node("rewrite_node", rewrite_node)
     graph.add_node("groundedness_node", groundedness_node)
+    graph.add_node("write_action_node", write_action_node)
+    graph.add_node("action_finalize_node", action_finalize_node)
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges(
@@ -629,8 +862,21 @@ def build_graph(checkpointer=None):
     graph.add_conditional_edges(
         "llm_node",
         _llm_route_edge,
-        {"tool_node": "tool_node", "groundedness_node": "groundedness_node", END: END},
+        {
+            "approval_gate": "approval_gate",
+            "llm_node": "llm_node",
+            "tool_node": "tool_node",
+            "groundedness_node": "groundedness_node",
+            END: END,
+        },
     )
+    graph.add_conditional_edges(
+        "approval_gate",
+        _approval_route_edge,
+        {"write_action_node": "write_action_node", "action_finalize_node": "action_finalize_node"},
+    )
+    graph.add_edge("write_action_node", "action_finalize_node")
+    graph.add_edge("action_finalize_node", END)
     graph.add_conditional_edges(
         "tool_node",
         _tool_route_edge,
@@ -668,6 +914,7 @@ def stream_graph(
     kb_id: int,
     history: Optional[list] = None,
     thread_id: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> Generator[GraphEvent, None, None]:
     """Streaming entry point: run the full router -> path graph for one query,
     yielding GraphEvents as nodes produce them (see module docstring's
@@ -695,13 +942,18 @@ def stream_graph(
     supersteps never replay" guarantee the idempotency audit depends on (see
     module docstring).
     """
-    config = {"configurable": {"thread_id": thread_id or uuid.uuid4().hex}}
+    resolved_thread_id = thread_id or uuid.uuid4().hex
+    config = {"configurable": {"thread_id": resolved_thread_id}}
     initial_state: GraphState = {
         "query": query,
         "kb_id": kb_id,
         "history": _serialize_history(history or []),
+        "thread_id": resolved_thread_id,
+        "write_intent": classify_write_intent(query),
     }
     final_state: GraphState = dict(initial_state)  # type: ignore[assignment]
+    if user_id is not None:
+        initial_state["user_id"] = user_id
 
     for mode, chunk in _compiled_graph.stream(
         initial_state, config=config, stream_mode=["custom", "values"], durability="sync"
@@ -712,6 +964,20 @@ def stream_graph(
         else:  # mode == "values"
             final_state.update(chunk)
 
+    snapshot = _compiled_graph.get_state(config)
+    pending = snapshot.values.get("pending_action")
+    if snapshot.next == ("approval_gate",) and pending:
+        proposal = pending["original_payload"]
+        yield GraphEvent(
+            type="confirmation_required",
+            data={
+                "action_id": pending["action_id"],
+                "tool": pending["tool"],
+                "title": proposal["title"],
+                "content": proposal["content"],
+            },
+        )
+        return
     yield GraphEvent(type="final", data=final_state)
 
 
@@ -762,3 +1028,39 @@ def resume_graph(thread_id: str) -> GraphState:
     for chunk in _compiled_graph.stream(None, config=config, stream_mode="values", durability="sync"):
         final_state = chunk  # type: ignore[assignment]
     return final_state
+
+
+def resume_graph_action(
+    thread_id: str,
+    resolution: ActionResolution | dict,
+) -> Generator[GraphEvent, None, None]:
+    validated = TypeAdapter(ActionResolution).validate_python(resolution)
+    config = {"configurable": {"thread_id": thread_id}}
+    final_state: GraphState = {}
+    for chunk in _compiled_graph.stream(
+        Command(resume=validated.model_dump()),
+        config=config,
+        stream_mode="values",
+        durability="sync",
+    ):
+        final_state = chunk  # type: ignore[assignment]
+
+    snapshot = _compiled_graph.get_state(config)
+    pending = snapshot.values.get("pending_action")
+    if not pending or not pending.get("receipt"):
+        raise RuntimeError("action resolution did not produce a committed receipt")
+    if snapshot.next:
+        raise RuntimeError("action graph did not reach a terminal state")
+    receipt = ActionReceipt.model_validate(pending["receipt"])
+    yield GraphEvent(type="action_result", data=receipt.model_dump())
+    yield GraphEvent(type="final", data=dict(snapshot.values))
+
+
+def get_graph_snapshot(thread_id: str) -> dict | None:
+    """Return the latest durable state for one graph thread, if it exists."""
+    snapshot = _compiled_graph.get_state(
+        {"configurable": {"thread_id": thread_id}}
+    )
+    if not snapshot.values:
+        return None
+    return dict(snapshot.values)
