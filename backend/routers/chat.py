@@ -435,8 +435,13 @@ def chat_stream(
 
                     _db = SessionLocal()
                     try:
-                        _db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
-                        _db.commit()
+                        persist_conversation_once(
+                            _db,
+                            thread_id=thread_id,
+                            kb_id=body.kb_id,
+                            question=body.message,
+                            answer=answer,
+                        )
                     finally:
                         _db.close()
 
@@ -476,8 +481,13 @@ def chat_stream(
                         if all_sources:
                             yield f"data: {json.dumps({'sources': all_sources}, ensure_ascii=False)}\n\n"
 
-                    db.add(Conversation(kb_id=body.kb_id, question=body.message, answer=answer))
-                    db.commit()
+                    persist_conversation_once(
+                        db,
+                        thread_id=thread_id,
+                        kb_id=body.kb_id,
+                        question=body.message,
+                        answer=answer,
+                    )
 
                 yield "data: [DONE]\n\n"
         return StreamingResponse(

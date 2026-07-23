@@ -29,6 +29,9 @@ class _Query:
     def all(self):
         return []
 
+    def one_or_none(self):
+        return None
+
 
 class _DB:
     def __init__(self):
@@ -43,6 +46,9 @@ class _DB:
 
     def commit(self):
         self.commits += 1
+
+    def refresh(self, conversation):
+        pass
 
 
 def _decode_text_frames(frames: list[str]) -> list[str]:

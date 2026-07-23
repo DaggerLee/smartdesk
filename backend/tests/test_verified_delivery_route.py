@@ -39,11 +39,25 @@ class _RequestDB:
         return _EmptyQuery()
 
 
+class _ThreadQuery:
+    def __init__(self, conversation):
+        self.conversation = conversation
+
+    def filter(self, *args):
+        return self
+
+    def one_or_none(self):
+        return self.conversation
+
+
 class _DeliveryDB:
     def __init__(self, events, commit_error=None):
         self.events = events
         self.commit_error = commit_error
         self.conversation = None
+
+    def query(self, model):
+        return _ThreadQuery(self.conversation)
 
     def add(self, conversation):
         self.events.append("add")
@@ -53,6 +67,12 @@ class _DeliveryDB:
         self.events.append("commit")
         if self.commit_error:
             raise self.commit_error
+
+    def refresh(self, conversation):
+        pass
+
+    def rollback(self):
+        self.events.append("rollback")
 
     def close(self):
         self.events.append("close")
@@ -147,6 +167,7 @@ def test_enabled_allowed_answer_is_committed_before_identical_frame(status):
     assert events == ["add", "commit", "close"]
     assert _decode_answer(answer_frame) == "graph answer"
     assert delivery_db.conversation.answer == "graph answer"
+    assert delivery_db.conversation.thread_id is not None
     assert next(generator) == "data: [DONE]\n\n"
     with pytest.raises(StopIteration):
         next(generator)
@@ -198,6 +219,7 @@ def test_flag_off_keeps_one_post_graph_generation_and_traces_committed_payload()
 
     assert [_decode_answer(frame) for frame in frames[:-1]] == ["regen", " answer"]
     assert delivery_db.conversation.answer == "regen answer"
+    assert delivery_db.conversation.thread_id is not None
     assert stream_mock.call_count == 1
     assert traces[0]["post_graph_generation_calls"] == 1
     assert traces[0]["delivery_kind"] == "regenerated_answer"

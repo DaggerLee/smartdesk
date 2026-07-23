@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -76,6 +77,7 @@ def test_graph_direct_http_sse_persistence_and_history_are_identical(tmp_path) -
         assert payloads[-1] == "[DONE]"
         assert delivered == "Hello world."
         assert conversation.answer == delivered
+        assert conversation.thread_id is not None
         assert history.json()[0]["answer"] == delivered
     finally:
         session.close()
@@ -129,6 +131,37 @@ def test_graph_rag_http_sources_delivery_persistence_and_history_are_identical(t
         }]
         assert delivered == "MCP answer."
         assert conversation.answer == delivered
+        assert conversation.thread_id is not None
         assert history.json()[0]["answer"] == delivered
+    finally:
+        session.close()
+
+
+def test_graph_direct_conflicting_thread_completion_fails(tmp_path) -> None:
+    app, session = _app_and_session(tmp_path)
+    try:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "SMARTDESK_AGENT_BACKEND": "langgraph",
+                    "SMARTDESK_HITL_WRITE_NOTE": "false",
+                },
+                clear=False,
+            ),
+            patch("routers.chat._owned_kb"),
+            patch("agent.graph.route", return_value="direct"),
+            patch("agent.graph.llm_stream", return_value=iter(["Hello."])),
+            patch(
+                "routers.chat.persist_conversation_once",
+                side_effect=chat.ConversationThreadConflictError("conflict"),
+            ),
+        ):
+            client = TestClient(app)
+            with pytest.raises(chat.ConversationThreadConflictError, match="conflict"):
+                client.post(
+                    "/api/chat/stream",
+                    json={"kb_id": 1, "message": "Hello"},
+                )
     finally:
         session.close()
