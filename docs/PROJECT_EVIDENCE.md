@@ -52,3 +52,20 @@ This append-only log records verified engineering outcomes that can be traced to
 - One paired rollout showed post-graph answer generation decrease from one call to zero. Its latency comparison is a single paired observation, not a statistical result.
 
 **Limitations:** The feature flag remains off. The initial empty-KB rollout produced fallback notices in three of four enabled requests; a populated-KB diagnostic produced two verified answers, one max-turn fallback, and one evidence rejection. Exact token cost is unknown.
+
+## EV-004 — HITL write-note local real-model closure
+
+**Problem:** Deterministic mocks could not prove that the configured Gemini model would route an explicit persistence request to the agent and emit a protocol-valid `write_note` function call.
+
+**Delivered:** A graph-only, API-driven approval flow now pauses before side effects, accepts a strict structured approval, writes one per-user Markdown file atomically, verifies it by reading it back, and derives the delivered and persisted answer only from the committed receipt.
+
+**Evidence:**
+
+- Deterministic backend suite: 243 tests passed; frontend terminal handling: 5 tests passed; Vite production build: 73 modules transformed.
+- Real smoke run `task10-7f977ca0f9b5` used the preregistered Chinese persistence query with LangGraph and HITL enabled.
+- The live request sequence was one `ListModels` request and exactly two `generateContent` requests: router plus tool proposal. No retry or post-receipt model call occurred.
+- The router selected `agent`; the graph emitted `PAUSED` before any Markdown file existed; structured `approve` resumed the stable action ID.
+- The receipt reported `succeeded` and read-back verification. The published file was 72 bytes and its independently measured SHA-256 matched the receipt.
+- The canonical receipt answer was byte-identical to the single persisted Conversation answer.
+
+**Limitations:** This is one stochastic real-model smoke, not a three-run evaluation. Token and monetary cost are unknown. Docker was unavailable in the active WSL environment, so the run used an isolated local `backend/data/task10-smoke/` root with the same application path semantics; Docker volume/runtime behavior and browser UX remain unverified. Production defaults remain legacy with HITL disabled.
