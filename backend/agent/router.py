@@ -10,7 +10,8 @@ extra retrieval).
 
 from __future__ import annotations
 
-from llm.client import complete
+from agent.write_note_policy import classify_write_intent
+from llm.client import LLMProtocolError, complete
 from llm.trace import write as _trace_write
 
 SYSTEM_PROMPT = """\
@@ -77,13 +78,19 @@ def route(query: str) -> str:
     Returns:
         "direct" | "rag" | "agent".  Falls back to "rag" on parse failure.
     """
-    resp = complete(
-        messages=[{"role": "user", "parts": [{"text": query}]}],
-        tools=None,
-        system=SYSTEM_PROMPT,
-        temperature=0,  # deterministic output required for classification
-    )
-    raw_text = resp.text or ""
+    write_intent = classify_write_intent(query)
+    try:
+        resp = complete(
+            messages=[{"role": "user", "parts": [{"text": query}]}],
+            tools=None,
+            system=SYSTEM_PROMPT,
+            temperature=0,  # deterministic output required for classification
+        )
+        raw_text = resp.text or ""
+    except LLMProtocolError:
+        if write_intent != "persist":
+            raise
+        raw_text = "<protocol_error>"
     label = raw_text.strip().lower()
 
     # Substring match handles verbose model output (e.g. "Category: rag").
@@ -97,5 +104,7 @@ def route(query: str) -> str:
     else:
         decision = "rag"
 
+    if write_intent == "persist":
+        decision = "agent"
     _trace_write({"type": "router_decision", "raw_text": raw_text, "decision": decision})
     return decision

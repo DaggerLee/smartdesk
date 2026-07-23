@@ -35,6 +35,10 @@ class LLMResponse:
     tool_calls: list[ToolCall] # non-empty when the model returns functionCall parts
     raw: dict                  # full API response, used by trace logger
 
+class LLMProtocolError(RuntimeError):
+    """Gemini returned a successful HTTP response with an unusable schema."""
+
+
 
 # ── Secret hygiene ────────────────────────────────────────────────────────────
 
@@ -219,7 +223,12 @@ def complete(
             break
         data = resp.json()
 
-        parts = data["candidates"][0]["content"].get("parts", [])
+        candidates = data.get("candidates") if isinstance(data, dict) else None
+        if not isinstance(candidates, list) or not candidates:
+            raise LLMProtocolError(
+                "Gemini response schema invalid: candidates missing or empty"
+            )
+        parts = candidates[0]["content"].get("parts", [])
 
         tool_calls = [
             ToolCall(name=p["functionCall"]["name"], args=p["functionCall"].get("args", {}))

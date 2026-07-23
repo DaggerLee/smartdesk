@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent.router import route
-from llm.client import LLMResponse
+from llm.client import LLMProtocolError, LLMResponse
 
 
 def _resp(text: str) -> LLMResponse:
@@ -51,3 +51,17 @@ def test_route_unknown_text_defaults_to_rag(router_mock):
     """Completely unrecognised output falls back to 'rag'."""
     router_mock.return_value = _resp("I cannot determine the category")
     assert route("anything") == "rag"
+
+
+def test_explicit_persist_intent_overrides_model_rag_label(router_mock):
+    router_mock.return_value = _resp("rag")
+
+    assert route("Save this as a Markdown file titled Smoke") == "agent"
+
+
+def test_explicit_persist_intent_fails_over_to_agent_on_protocol_error(router_mock):
+    router_mock.side_effect = LLMProtocolError(
+        "Gemini response schema invalid: candidates missing"
+    )
+
+    assert route("Save this as a Markdown file titled Smoke") == "agent"

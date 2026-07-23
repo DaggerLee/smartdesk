@@ -130,3 +130,24 @@ def test_complete_gives_up_after_retry_budget_on_connection_error(monkeypatch):
             client.complete(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
 
     assert len(sleeps) == 5  # attempts 0-4 retry (5 sleeps), attempt 5 raises
+
+
+def test_complete_candidate_less_200_raises_safe_protocol_error(monkeypatch):
+    monkeypatch.setattr(client, "_model_validated", True)
+    monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
+    response = _fake_response(200, "https://example.com")
+    response._content = (
+        b'{"promptFeedback":{"blockReason":"OTHER"},'
+        b'"sensitiveBody":"DO_NOT_LOG_THIS"}'
+    )
+
+    with patch("llm.client.requests.post", return_value=response):
+        with pytest.raises(client.LLMProtocolError) as error:
+            client.complete(
+                messages=[{"role": "user", "parts": [{"text": "persist"}]}]
+            )
+
+    message = str(error.value)
+    assert "candidates" in message
+    assert "DO_NOT_LOG_THIS" not in message
+    assert "SECRET123" not in message
