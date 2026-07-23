@@ -4,6 +4,8 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - SECRET_KEY=${SECRET_KEY}
+      - SMARTDESK_AGENT_BACKEND=${SMARTDESK_AGENT_BACKEND:-langgraph}
+      - SMARTDESK_HITL_WRITE_NOTE=${SMARTDESK_HITL_WRITE_NOTE:-true}
     volumes:
       # Persist SQLite database and ChromaDB vector store across container restarts
       - smartdesk_data:/app/data

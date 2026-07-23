@@ -27,11 +27,22 @@ def _import_config(value: str | None) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_agent_backend_defaults_to_legacy_when_absent() -> None:
+def test_agent_backend_defaults_to_langgraph_when_absent() -> None:
     result = _import_config(None)
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "legacy"
+    assert result.stdout.strip() == "langgraph"
+
+
+def test_deployment_surfaces_publish_cutover_defaults() -> None:
+    env_example = (REPO_ROOT / ".env.example").read_text()
+    compose = (REPO_ROOT / "docker-compose.yml").read_text()
+    backend_environment = compose.split("environment:", 1)[1].split("volumes:", 1)[0]
+
+    assert "SMARTDESK_AGENT_BACKEND=langgraph" in env_example
+    assert "SMARTDESK_HITL_WRITE_NOTE=true" in env_example
+    assert "SMARTDESK_AGENT_BACKEND=${SMARTDESK_AGENT_BACKEND:-langgraph}" in backend_environment
+    assert "SMARTDESK_HITL_WRITE_NOTE=${SMARTDESK_HITL_WRITE_NOTE:-true}" in backend_environment
 
 
 @pytest.mark.parametrize("value", ["legacy", "langgraph"])

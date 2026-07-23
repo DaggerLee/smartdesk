@@ -29,10 +29,10 @@ def test_classify_write_intent_is_high_precision(text: str, expected: str):
     assert classify_write_intent(text) == expected
 
 
-def test_hitl_write_note_defaults_off(monkeypatch):
+def test_hitl_write_note_defaults_on(monkeypatch):
     monkeypatch.delenv("SMARTDESK_HITL_WRITE_NOTE", raising=False)
 
-    assert is_hitl_write_note_enabled() is False
+    assert is_hitl_write_note_enabled() is True
 
 
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])

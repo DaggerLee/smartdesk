@@ -13,7 +13,7 @@ RELEVANCE_THRESHOLD: float = 0.62
 
 # ── Agent backend ─────────────────────────────────────────────────────────────
 AGENT_BACKEND_ENV_VAR: str = "SMARTDESK_AGENT_BACKEND"
-AGENT_BACKEND_DEFAULT: str = "legacy"
+AGENT_BACKEND_DEFAULT: str = "langgraph"
 VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"legacy", "langgraph"})
 
 
@@ -34,9 +34,9 @@ AGENT_BACKEND: str = get_agent_backend()
 # ── Agent loop ────────────────────────────────────────────────────────────────
 MAX_AGENT_TURNS: int = 5
 
-# Phase A keeps write-note HITL disabled unless explicitly enabled.
+# Default cutover enables write-note HITL; the environment flag remains the rollback.
 HITL_WRITE_NOTE_ENV_VAR: str = "SMARTDESK_HITL_WRITE_NOTE"
-HITL_WRITE_NOTE_DEFAULT: bool = False
+HITL_WRITE_NOTE_DEFAULT: bool = True
 
 # The Docker deployment mounts its persistent volume at /app/data. With /app
 # as the working directory, this relative default stays inside that volume.
