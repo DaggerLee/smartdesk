@@ -7,6 +7,24 @@ supersedes the implementation guidance in
 `docs-local/HITL_Write_Tool_Design.md`. Any behavior change requires an
 explicit design amendment before implementation continues.
 
+### 2026-07-22 pre-cutover amendment
+
+A pre-cutover audit found independent backend environment reads in the
+production chat route and eval entry point. The final cutover is therefore
+split into independently revertible changes:
+
+1. correct ordinary graph Conversation persistence so every completed graph
+   request uses its run `thread_id`, as this specification already requires;
+2. centralize backend selection and strict validation in `config.py`, with
+   both `chat.py` and `run_eval.py` consuming that owner;
+3. change only the default backend and HITL values after the first two changes
+   and the complete deterministic suite pass.
+
+The configuration-consolidation change keeps behavior unchanged for legal
+`legacy` and `langgraph` values and keeps the default as `legacy`. It changes
+invalid values from silent tolerance to fail-fast rejection. The final default
+switch remains free of runtime orchestration changes.
+
 ## Goal
 
 Build the minimum end-to-end human-in-the-loop write workflow on the existing
@@ -556,10 +574,12 @@ disabled. Before changing defaults, full HTTP chat-route tests cover:
 
 Node tests alone do not satisfy this gate. Any failure prevents cutover.
 
-After all deterministic and HITL tests pass, the final default switch is a
-separate commit that changes config, `.env.example`, and Docker defaults to
-LangGraph plus HITL enabled. It contains no feature implementation and can be
-reverted independently.
+After all deterministic and HITL tests pass, ordinary graph Conversation
+persistence and backend configuration ownership are corrected in separate
+test-driven commits with defaults unchanged. The final default switch is then
+a separate commit that changes config, `.env.example`, and Docker defaults to
+LangGraph plus HITL enabled. It contains no runtime orchestration change and
+can be reverted independently.
 
 ## Real Gemini verification gate
 
@@ -589,6 +609,12 @@ Implementation delivery is separated into:
 2. Phase A TDD feature commits with defaults unchanged;
 3. deterministic and gold verification;
 4. user-notified real smoke gate;
-5. an independent default-cutover commit only if every gate passes.
+5. browser-level `[PAUSED]` / `[FAILED]` visual acceptance;
+6. a pre-cutover governance amendment;
+7. an ordinary graph Conversation persistence correction with defaults
+   unchanged;
+8. a backend configuration-consolidation commit with defaults unchanged;
+9. an independent default-cutover commit only if every gate and the complete
+   deterministic suite pass.
 
 The branch is not merged or pushed during this task unless the user later asks.

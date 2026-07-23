@@ -230,7 +230,67 @@
 - [ ] Record actual model request count, result receipt, relative path, Conversation identity, and observed cost as `unknown` when unavailable.
 - [ ] If the smoke fails, do not cut over defaults; return to a failing deterministic regression test before fixing code.
 
-### Task 11: Independent default cutover commit
+### Task 11A: Pre-cutover governance amendment
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-07-22-hitl-write-note-design.md`
+- Modify: `docs/superpowers/plans/2026-07-22-hitl-write-note.md`
+- Modify: `docs-local/SmartDesk_Decisions.md`
+- Modify: `docs-local/CURRENT.md`
+
+- [ ] Record the split between ordinary graph persistence correction,
+  configuration consolidation, and the final default switch.
+- [ ] Record that both `backend/routers/chat.py` and
+  `backend/eval/run_eval.py` consume the centralized backend setting.
+- [ ] Correct Task 10 Docker artifact paths to the files preserved in
+  `smartdesk_smartdesk_data`.
+- [ ] Record the 2026-07-22 human visual acceptance of `[PAUSED]` and
+  `[FAILED]`.
+- [ ] Commit governance changes separately from production code.
+
+### Task 11B: Ordinary graph Conversation identity correction
+
+**Files:**
+- Modify: `backend/routers/chat.py`
+- Modify: `backend/tests/test_graph_chat_routes.py`
+- Modify/add focused tests only where needed for both agent delivery modes.
+
+**Interfaces:**
+- Makes every completed graph request persist through
+  `persist_conversation_once(..., thread_id=thread_id)`.
+- Preserves the existing flag-off streaming and emission order.
+
+- [ ] Write failing tests for direct/RAG and agent completion with
+  verified-delivery both enabled and disabled, asserting non-null graph
+  `thread_id`.
+- [ ] Write a failing ordinary-completion conflict test.
+- [ ] Change all three ordinary graph completion paths to use the existing
+  idempotent persistence helper without changing emission order.
+- [ ] Run focused graph route and verified-delivery tests.
+- [ ] Commit independently with defaults unchanged.
+
+### Task 11C: Centralized backend configuration and fail-fast validation
+
+**Files:**
+- Modify: `backend/config.py`
+- Modify: `backend/routers/chat.py`
+- Modify: `backend/eval/run_eval.py`
+- Modify/add focused configuration, route, and eval tests.
+
+**Interfaces:**
+- Makes `backend/config.py` the semantic owner of
+  `SMARTDESK_AGENT_BACKEND`.
+- Legal values are exactly `legacy` and `langgraph`.
+
+- [ ] Write failing tests proving `chat.py` and `run_eval.py` consume the
+  shared owner and every other backend value fails fast.
+- [ ] Keep the default `legacy`; preserve behavior for both legal values.
+- [ ] Remove independent environment reads and fallback defaults from the
+  production route and eval entry point.
+- [ ] Run focused configuration, route, and eval tests.
+- [ ] Commit independently with defaults unchanged.
+
+### Task 11D: Independent default cutover commit
 
 **Files:**
 - Modify: `backend/config.py`
@@ -239,18 +299,19 @@
 - Modify/add cutover default tests.
 
 **Interfaces:**
-- Changes defaults to LangGraph plus HITL enabled only after Task 10 passes.
+- Changes defaults to LangGraph plus HITL enabled only after Task 10, browser
+  acceptance, Tasks 11A-11C, and the complete deterministic suite pass.
 - Retains `SMARTDESK_AGENT_BACKEND=legacy` as the emergency rollback.
 
-- [ ] Write failing config tests for final defaults and fail-fast rejection of every backend value other than exactly legacy or langgraph; invalid-backend production code belongs only to this task.
+- [ ] Write failing config/default tests for the final backend and HITL
+  defaults.
 - [ ] Change config, example environment, and Docker defaults only.
 - [ ] Run full direct/RAG/agent cutover tests and the complete suite again.
 - [ ] Commit as an independent cutover commit; do not merge or push.
-
 ## Plan self-review
 
 - Every frozen spec section maps to a task above.
-- Phase A defaults and the final cutover are separated.
+- Phase A defaults, pre-cutover corrections, and the final cutover are separated.
 - The real Gemini step is an explicit user-notice stop.
 - No task creates a Note table, approval UI, free-text approval, or legacy write tool.
 - Receipt finalization has no post-receipt Gemini completion.
