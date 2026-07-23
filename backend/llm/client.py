@@ -228,7 +228,13 @@ def complete(
             raise LLMProtocolError(
                 "Gemini response schema invalid: candidates missing or empty"
             )
-        parts = candidates[0]["content"].get("parts", [])
+        candidate = candidates[0]
+        content = candidate.get("content") if isinstance(candidate, dict) else None
+        if not isinstance(content, dict):
+            raise LLMProtocolError(
+                "Gemini response schema invalid: candidate content missing"
+            )
+        parts = content.get("parts", [])
 
         tool_calls = [
             ToolCall(name=p["functionCall"]["name"], args=p["functionCall"].get("args", {}))
