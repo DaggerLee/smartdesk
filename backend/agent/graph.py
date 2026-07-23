@@ -301,15 +301,10 @@ def rag_node(state: GraphState) -> dict:
     web/weather fallback -> generate_answer_stream), calling the same
     underlying functions chat.py calls.
 
-    Streams each raw chunk through get_stream_writer() as it arrives, same as
-    direct_node — one-stage streaming, no graph-side buffering. [SOURCE_USED]/
-    [WEB_USED] marker detection (used_docs/used_web) happens here, on the raw
-    joined text, before stripping — mirroring where chat.py's legacy generate()
-    does the same detection+strip on its own joined chunks. Doing it in the
-    node keeps that business logic where the rest of the RAG chain logic
-    already lives (see module docstring's "known duplication" note); the SSE
-    layer only reads used_docs/used_web + doc_sources/web_results to decide
-    whether to emit a sources frame, it doesn't re-derive them.
+    Buffers the RAG answer long enough to remove private source markers before
+    emitting one clean SSE chunk. Marker detection stays on the raw joined
+    text before stripping, keeping delivered text byte-identical to the clean
+    persisted answer. Direct replies retain live token streaming.
     """
     query = state["query"]
     kb_id = state["kb_id"]
@@ -367,12 +362,12 @@ def rag_node(state: GraphState) -> dict:
     raw_chunks: list[str] = []
     for chunk in generate_answer_stream(query, context_texts, history, web_results or None, msg_type):
         raw_chunks.append(chunk)
-        writer({"kind": "chunk", "text": chunk})
     raw_answer = "".join(raw_chunks)
 
     used_docs = "[SOURCE_USED]" in raw_answer
     used_web = "[WEB_USED]" in raw_answer
     clean_answer = raw_answer.replace("[SOURCE_USED]", "").replace("[WEB_USED]", "").rstrip()
+    writer({"kind": "chunk", "text": clean_answer})
 
     return {
         "msg_type": msg_type,

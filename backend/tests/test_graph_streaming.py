@@ -59,7 +59,8 @@ def test_rag_path_streams_chunks_and_reports_sources_gate():
                return_value=iter(["The answer", "[SOURCE_USED]"])):
         events = list(stream_graph("What is X?", kb_id=1))
 
-    assert [e.type for e in events] == ["chunk", "chunk", "final"]
+    assert [e.type for e in events] == ["chunk", "final"]
+    assert events[0].data == {"text": "The answer"}
     final = events[-1].data
     assert final["route"] == "rag"
     assert final["answer"] == "The answer"       # marker stripped for DB/display
