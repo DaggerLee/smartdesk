@@ -73,3 +73,48 @@ This append-only log records verified engineering outcomes that can be traced to
 - An API-only idempotent resolve read back the committed receipt without a model call and returned HTTP 200, `succeeded`, the canonical answer, and `[DONE]`; checkpoint, delivered answer, and Conversation were identical.
 
 **Limitations:** These are one local and one Docker stochastic real-model success, not a three-run evaluation. Token and monetary cost are unknown. Two earlier bounded Docker attempts returned HTTP 200 without usable router candidate content and stopped before proposal with zero file writes. The successful Docker run's first verifier incorrectly omitted the server-owned `users/{user_id}` directory when locating the file and therefore recorded a harness failure; the preserved checkpoint, file, receipt, Conversation, and idempotent SSE readback independently verify product closure. Browser UX remains unverified, and production defaults remain legacy with HITL disabled.
+
+## EV-005 — HITL write-note production cutover
+
+**Problem:** The real-model closure in EV-004 proved the write protocol, but
+the production defaults were still legacy/HITL-off and the browser had not
+visually demonstrated distinct paused and failed terminal states.
+
+**Delivered:** The API-only HITL workflow is now the default LangGraph path.
+Ordinary graph conversations persist by their generated thread identity,
+backend selection has one strict configuration owner for chat and eval, and
+the frontend treats `[PAUSED]` and `[FAILED]` as distinct non-answer terminals
+without adding approval controls.
+
+**Evidence:**
+
+- Milestone PR: `#1`; merge commit: `d4f9784`.
+- Pre-cutover corrections: Conversation persistence `825bc2d`; centralized
+  strict backend configuration `009d96d`; independent default cutover
+  `ad46629`.
+- Fresh post-merge verification on `main@d4f9784`: 258 backend tests passed
+  with 7 existing SQLAlchemy deprecation warnings; 5 frontend tests passed;
+  the Vite production build transformed 73 modules.
+- Human Compose validation ran `docker compose config -q` from the SmartDesk
+  repository and returned exit code 0. No container or model request was
+  started by that check.
+- Human browser attestation used the real SmartDesk frontend with a temporary
+  zero-Gemini mock API: paused and failed outcomes both stopped loading,
+  displayed distinct states, did not render their terminal markers as answer
+  text, and introduced no approval UI.
+- The earlier local run `task10-7f977ca0f9b5` and Docker run
+  `task10-181d4f7e5b84` each completed router, function call, interrupt,
+  approval, receipt, Conversation, and final delivery using one `ListModels`
+  plus exactly two `generateContent` requests and no retry or post-receipt
+  model call.
+- The verified Markdown artifact was 72 bytes. Its independent SHA-256
+  measurement,
+  `a03c90e300fced691ebe7b71dbba9e54ac80bf06a1c37f007fb73dab755d1536`,
+  matched the committed receipt.
+
+**Limitations:** The live evidence is one local and one Docker stochastic
+success, not a three-run evaluation; token and monetary cost remain unknown.
+Browser acceptance used a deterministic zero-Gemini API and therefore proves
+client terminal behavior, not another live model round trip. Approval remains
+API-only, and the SQLite checkpointer remains a single-process/demo
+constraint.
