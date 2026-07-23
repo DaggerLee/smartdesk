@@ -1,6 +1,5 @@
 import hashlib
 import json
-import os
 import re
 import uuid
 from typing import Generator, List, Optional
@@ -12,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import chroma_client
+from config import get_agent_backend
 from agent.action_locks import action_lock
 from agent.delivery import (
     NON_CONTEXT_ANSWERS,
@@ -342,7 +342,7 @@ def chat_stream(
 
     request_id = uuid.uuid4().hex[:12]
     _sse_headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    backend = os.getenv("SMARTDESK_AGENT_BACKEND", "legacy")
+    backend = get_agent_backend()
 
     if (
         backend == "legacy"

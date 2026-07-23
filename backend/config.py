@@ -11,6 +11,26 @@ CHUNK_OVERLAP: int = 100
 # queries always scored ~0.85-1.9 — relevance_ok was permanently ~0%).
 RELEVANCE_THRESHOLD: float = 0.62
 
+# ── Agent backend ─────────────────────────────────────────────────────────────
+AGENT_BACKEND_ENV_VAR: str = "SMARTDESK_AGENT_BACKEND"
+AGENT_BACKEND_DEFAULT: str = "legacy"
+VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"legacy", "langgraph"})
+
+
+def get_agent_backend() -> str:
+    value = os.getenv(AGENT_BACKEND_ENV_VAR, AGENT_BACKEND_DEFAULT)
+    if value not in VALID_AGENT_BACKENDS:
+        raise ValueError(
+            "SMARTDESK_AGENT_BACKEND must be exactly 'legacy' or 'langgraph'"
+        )
+    return value
+
+
+# Validate at import/startup; request-time consumers call the same owner so a
+# later process-environment mutation cannot silently bypass validation.
+AGENT_BACKEND: str = get_agent_backend()
+
+
 # ── Agent loop ────────────────────────────────────────────────────────────────
 MAX_AGENT_TURNS: int = 5
 
