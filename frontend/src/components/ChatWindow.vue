@@ -141,9 +141,9 @@
 </template>
 
 <script setup>
-import { marked } from "marked";
 import { nextTick, ref, watch } from "vue";
 import { clearChatHistory, deleteFile, getChatHistory, listFiles, sendMessageStream } from "../api/index.js";
+import { renderMarkdown } from "./markdown.js";
 import { settleTerminalMessage } from "./chatStreamState.js";
 import FileUpload from "./FileUpload.vue";
 
@@ -291,11 +291,6 @@ function toggleSummary(file) {
   } else {
     activeSummaryFile.value = file;
   }
-}
-
-function renderMarkdown(text) {
-  if (!text) return "";
-  return marked.parse(text, { breaks: true });
 }
 
 function renderMessageContent(msg) {

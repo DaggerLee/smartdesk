@@ -9,11 +9,13 @@
   },
   "dependencies": {
     "axios": "^1.6.7",
+    "dompurify": "^3.4.12",
     "marked": "^11.1.1",
     "vue": "^3.4.15"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.3",
+    "jsdom": "^29.1.1",
     "vite": "^5.0.12"
   }
 }
