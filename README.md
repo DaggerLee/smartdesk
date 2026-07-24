@@ -10,6 +10,21 @@ The project focuses on a practical engineering question: how can an AI
 assistant use tools and take approved actions without letting checked,
 persisted, and user-visible results drift apart?
 
+## From v1 to v2
+
+| Capability | v1 baseline | v2 today | Evidence |
+|---|---|---|---|
+| Request handling | One linear RAG chain | A router splits `direct`, `rag`, and `agent` requests | EV-001 |
+| Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
+| Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
+| Persistent writes | None | API-approved `write_note`, finalized only from a committed receipt | EV-004, EV-005 |
+| Tool exposure | In-process helpers only | The same tools served over MCP | MCP section below |
+| Measurement | Manual inspection | A 35-item gold set and evaluation harness | EV-001 |
+| Markdown rendering | Unsanitized `v-html` sink | One sanitized rendering boundary with source-level guards | EV-006 |
+
+Evidence identifiers refer to entries in
+[Project Evidence](docs/PROJECT_EVIDENCE.md).
+
 ## Verified Highlights
 
 | Area | Verified result | Evidence |
@@ -110,30 +125,18 @@ full evidence and limitations for:
 
 ---
 
-## v2: Agentic Knowledge Assistant
+<details>
+<summary><b>v1 baseline (historical) — screenshots, features, and stack</b></summary>
 
-SmartDesk now routes requests across `direct`, `rag`, and `agent` paths. The
-agent path uses LangGraph orchestration, durable SQLite checkpoints, MCP
-tool exposure, groundedness checks, and an API-driven human approval flow for
-`write_note`.
+### v1 screenshots
 
-**Verified status:** the HITL production cutover passed 258 backend tests,
-5 frontend tests, and a 73-module production build. The observed Markdown XSS
-was fixed and is guarded by regression tests; its final verification passed
-11 frontend tests and a 75-module production build. See
-[Project Evidence](docs/PROJECT_EVIDENCE.md) for evidence and limitations.
-
----
-
-## v1 (baseline) — Screenshots
-
-### Main Interface
+**Main interface**
 ![Main](screenshot-main.png)
 
-### AI-Powered Q&A with Source Citation
+**AI-powered Q&A with source citation**
 ![Chat](screenshot-chat.png)
 
-## v1 (baseline) — Features
+### v1 features
 
 - 📚 **Knowledge Base Management** — Create multiple knowledge bases, each isolated per user
 - 📄 **Document Ingestion** — Upload PDF and TXT files; automatically parsed, chunked, and indexed
@@ -148,7 +151,7 @@ was fixed and is guarded by regression tests; its final verification passed
 - 🔐 **JWT Authentication** — User registration/login with bcrypt password hashing; each user's data is fully isolated
 - 🐳 **Docker Deployment** — One-command startup with docker-compose
 
-## v1 (baseline) — Tech Stack
+### v1 tech stack
 
 | Layer | Technologies |
 |-------|-------------|
@@ -160,7 +163,9 @@ was fixed and is guarded by regression tests; its final verification passed
 | Auth | JWT (HS256) + bcrypt |
 | Deployment | Docker, docker-compose |
 
-## Quick Start (Docker) — works for both v1 and v2
+</details>
+
+## Quick Start (Docker)
 
 ```bash
 git clone https://github.com/DaggerLee/smartdesk.git
@@ -190,7 +195,8 @@ npm run dev
 
 Open http://localhost:5173
 
-## v1 Baseline Architecture
+<details>
+<summary><b>v1 baseline (historical) — original linear pipeline</b></summary>
 
 ```
 User Query
@@ -208,7 +214,9 @@ RAG Quality Check (ChromaDB cosine distance threshold)
 SSE Stream → [SOURCE_USED] / [WEB_USED] markers → Source Cards
 ```
 
-## v1 (baseline) — API Endpoints
+</details>
+
+## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

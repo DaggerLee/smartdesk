@@ -11,9 +11,19 @@ work understandable to a recruiting manager or interviewer within 30 seconds.
 This is a human-authorized portfolio milestone, not a reopening of the
 SmartDesk product roadmap.
 
+### 2026-07-24 human acceptance amendment
+
+A human acceptance pass found that the explicitly labelled `v2` section
+restated figures already published in the verified highlights table, so the
+verified v2 work read as thinner than the retained v1 detail. The design gains
+one further presentation commit and no other scope.
+
+Public agent-instruction scope, meaning `AGENTS.md` and `CLAUDE.md`, stays
+outside this design and is delivered as a separate task on its own branch.
+
 ## Delivery structure
 
-The work is split into two independently reviewable implementation commits.
+The work is split into independently reviewable implementation commits.
 
 ### Commit A — Accuracy correction
 
@@ -35,6 +45,18 @@ Commit A must stand on its own and may be merged without Commit B.
   content is accepted.
 - Preserve accurate quick-start instructions and keep detailed implementation
   material below the portfolio summary.
+
+### Commit C — Version balance correction
+
+Added by the 2026-07-24 human acceptance amendment.
+
+- Remove the redundant explicit `v2` section whose figures duplicate the
+  verified highlights table.
+- Add one compact `v1` to `v2` capability evolution table, with every row
+  pointing at an existing evidence entry.
+- Collapse v1 historical detail instead of deleting it.
+- Change no metric, image, product code, configuration, dependency, test, or
+  eval artifact.
 
 ## Evidence contract
 
