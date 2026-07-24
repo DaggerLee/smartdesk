@@ -19,18 +19,26 @@ function sourceFiles(directory) {
 }
 
 
-function matchingFiles(pattern) {
-  return sourceFiles(srcDir)
-    .filter((path) => pattern.test(readFileSync(path, "utf8")))
-    .map((path) => path.slice(srcDir.length + 1).replaceAll("\\", "/"));
+function matchingOccurrences(pattern) {
+  return sourceFiles(srcDir).flatMap((path) => {
+    const relativePath = path.slice(srcDir.length + 1).replaceAll("\\", "/");
+    const matches = readFileSync(path, "utf8").match(
+      new RegExp(pattern.source, `${pattern.flags}g`),
+    );
+    return Array(matches?.length ?? 0).fill(relativePath);
+  });
 }
 
 
 test("keeps a single v-html sink in ChatWindow", () => {
-  assert.deepEqual(matchingFiles(/\bv-html\s*=/), ["components/ChatWindow.vue"]);
+  assert.deepEqual(matchingOccurrences(/\bv-html\s*=/), [
+    "components/ChatWindow.vue",
+  ]);
 });
 
 
 test("keeps marked.parse inside the sanitized Markdown boundary", () => {
-  assert.deepEqual(matchingFiles(/\bmarked\.parse\s*\(/), ["components/markdown.js"]);
+  assert.deepEqual(matchingOccurrences(/\bmarked\.parse\s*\(/), [
+    "components/markdown.js",
+  ]);
 });
