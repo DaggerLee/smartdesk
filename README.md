@@ -2,13 +2,18 @@
 
 An AI-powered enterprise knowledge base assistant. Upload documents, get accurate answers grounded in your content — with JWT auth, streaming SSE, and one-command Docker deployment.
 
-## v2: Agentic Upgrade (in progress)
+## v2: Agentic Knowledge Assistant
 
-v2 refactors the linear RAG pipeline into a measurable, maintainable agentic system: an LLM **router** dispatches each query to the right path (direct / rag / agent), a hand-written **agent loop** executes multi-turn tool use (retrieve + web search) via Gemini native function calling, **self-healing** mechanisms retry on tool errors and low-relevance retrievals, and a benchmark-driven **eval harness** tracks faithfulness, answer relevancy, and retrieval recall. See [CLAUDE.md — v2 Target Architecture](CLAUDE.md#v2-target-architecture) for the full design.
+SmartDesk now routes requests across `direct`, `rag`, and `agent` paths. The
+agent path uses LangGraph orchestration, durable SQLite checkpoints, MCP
+tool exposure, groundedness checks, and an API-driven human approval flow for
+`write_note`.
 
-**Current progress:** W1 complete (query router + agent loop + native function calling + JSONL tracing + 17 unit tests) — W2 in progress (self-healing three mechanisms + MCP server).
-
-Full architecture docs and eval results coming with v2.0.
+**Verified status:** the HITL production cutover passed 258 backend tests,
+5 frontend tests, and a 73-module production build. The observed Markdown XSS
+was fixed and is guarded by regression tests; its final verification passed
+11 frontend tests and a 75-module production build. See
+[Project Evidence](docs/PROJECT_EVIDENCE.md) for evidence and limitations.
 
 ---
 
@@ -41,7 +46,7 @@ Full architecture docs and eval results coming with v2.0.
 |-------|-------------|
 | Frontend | Vue 3, Vite, Nginx |
 | Backend | Python, FastAPI |
-| AI | Google Gemini API (gemini-1.5-flash) |
+| AI | Google Gemini API |
 | Vector DB | ChromaDB (local persistent storage) |
 | Database | SQLite |
 | Auth | JWT (HS256) + bcrypt |
@@ -77,7 +82,7 @@ npm run dev
 
 Open http://localhost:5173
 
-## v1 (baseline) — Architecture
+## v1 Baseline Architecture
 
 ```
 User Query
@@ -103,9 +108,12 @@ SSE Stream → [SOURCE_USED] / [WEB_USED] markers → Source Cards
 | POST | /api/auth/login | Login, returns JWT |
 | GET | /api/knowledge-base | List user's knowledge bases |
 | POST | /api/knowledge-base | Create knowledge base |
+| DELETE | /api/knowledge-base/{kb_id} | Delete knowledge base |
+| GET | /api/knowledge-base/{kb_id}/files | List knowledge-base files |
 | POST | /api/knowledge-base/{id}/upload | Upload document |
 | DELETE | /api/knowledge-base/{id}/files/{filename} | Delete document |
-| POST | /api/chat/stream | RAG chat (streaming SSE) |
+| POST | /api/chat/stream | Routed chat (streaming SSE) |
+| POST | /api/chat/actions/{thread_id}/resolve | Approve, edit, or reject and resume a pending write |
 | GET | /api/chat/history/{kb_id} | Get conversation history |
 
 ## MCP Server
