@@ -118,3 +118,37 @@ Browser acceptance used a deterministic zero-Gemini API and therefore proves
 client terminal behavior, not another live model round trip. Approval remains
 API-only, and the SQLite checkpointer remains a single-process/demo
 constraint.
+
+## EV-006 — Unified Markdown XSS boundary
+
+**Problem:** Human browser testing showed that executable HTML in an AI answer
+could pass through Markdown rendering into Vue's `v-html` sink and execute in
+the real frontend.
+
+**Delivered:** Historical and streaming AI answers now share one frontend
+rendering boundary: Markdown is converted to HTML, sanitized with DOMPurify,
+and only then passed to the sole `v-html` sink. Source-level tests prevent a
+future direct-answer render or duplicate parser/sink from bypassing that
+boundary.
+
+**Evidence:**
+
+- Human reproduction on 2026-07-23 set a browser-side probe through an
+  `onerror` handler, confirming executable HTML rather than a scanner-only
+  warning.
+- Core correction: `56d4fc3`; boundary enforcement: `9d7e889`; rendering
+  contract coverage: `29bac52`.
+- PR #3 merged the work into `main` at `1a026c4`.
+- All 11 frontend tests passed after the final correction.
+- The production build completed with 75 transformed modules, and the
+  test-only jsdom dependency was absent from the production bundle.
+- The test suite preserves headings, emphasis, lists, fenced code, and safe
+  links while removing executable HTML, event handlers, and unsafe URL
+  protocols.
+- No Gemini request was required for reproduction, implementation, or final
+  deterministic verification.
+
+**Limitations:** This is a focused rendering-boundary correction, not a full
+content-security-policy rollout or a backend sanitization framework. Separate
+observations about narrow-screen layout, interrupted SSE state, and paused
+flow refresh continuity remain deferred and are not claimed as fixed.
