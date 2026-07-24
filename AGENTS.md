@@ -34,6 +34,7 @@ Full source: `docs-local/reference-AGENTS.md` (gitignored, not committed).
 - **Communicate with the user in Chinese**; all code, comments, API strings, and file content in English.
 - Use plain, everyday Chinese for user-facing communication and minimize technical jargon.
 - When a technical term is necessary, explain it in simple Chinese the first time it appears.
+- In Windows-hosted WSL/UNC workspaces, prefer running repository commands through WSL with the Linux path; if a Windows file tool fails on the UNC path, retry through WSL.
 
 ## Current Context and Delivery Governance
 
