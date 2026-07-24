@@ -1,6 +1,114 @@
-# 🤖 SmartDesk — Enterprise Knowledge Assistant
+# SmartDesk — Verified Enterprise Knowledge Assistant
 
-An AI-powered enterprise knowledge base assistant. Upload documents, get accurate answers grounded in your content — with JWT auth, streaming SSE, and one-command Docker deployment.
+SmartDesk is a portfolio-grade knowledge assistant that combines routed RAG,
+LangGraph agent workflows, MCP-exposed tools, measurable evaluation, and an
+API-driven human approval path for persistent writes.
+
+## Why This Project
+
+The project focuses on a practical engineering question: how can an AI
+assistant use tools and take approved actions without letting checked,
+persisted, and user-visible results drift apart?
+
+## Verified Highlights
+
+| Area | Verified result | Evidence |
+|---|---|---|
+| Measurable baseline | 35-item set; 91.7% router accuracy; 94.4% end-to-end contains pass; 88% grounded rate; zero execution errors | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-001 |
+| HITL cutover | 258 backend tests; 5 frontend tests; 73-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
+| Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
+| Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
+
+These baseline metrics are historical evidence, not current statistical
+guarantees. The live HITL evidence is one local and one Docker success, not a
+three-run evaluation. Browser terminal-state acceptance used a deterministic
+zero-Gemini API, not a live-model browser round trip.
+
+## Current Architecture
+
+```mermaid
+flowchart LR
+    U[User] --> V[Vue frontend]
+    V --> F[FastAPI API]
+    F --> R{Router}
+    R --> D[Direct path]
+    R --> G[RAG path]
+    R --> A[LangGraph agent path]
+    G --> C[(ChromaDB)]
+    A --> T[Shared tool layer]
+    T --> C
+    T --> W[Web search]
+    M[FastMCP exposure] --> T
+    A --> Q[(SQLite checkpoints)]
+    A --> X[Verified agent delivery]
+    D --> S[SSE response]
+    G --> S
+    X --> P[(Conversation persistence)]
+    P --> S
+```
+
+- LangGraph owns workflow orchestration.
+- FastMCP exposes the tool layer; it is not the graph engine.
+- SQLite checkpoints are the current single-process/demo durability model.
+- Verified agent delivery commits the canonical answer before SSE emission.
+
+## Human-Approved Write Path
+
+```mermaid
+flowchart TD
+    L[llm_node] --> G[approval_gate]
+    G --> I[interrupt]
+    I --> C["Command(resume)"]
+    C -->|approve or edit| W[write_action_node]
+    G -->|reject| F[action_finalize_node]
+    W --> F
+    F -->|"verification_source: action_receipt; bypass groundedness"| E[END]
+```
+
+The graph pauses before the file write. Approval or an edited payload resumes
+the write path; rejection skips the write. Both outcomes finalize from the
+action receipt, and write claims do not pass through the ordinary answer
+groundedness path.
+
+## Engineering Decisions
+
+- Route simple, retrieval, and tool-using requests separately.
+- Keep LangGraph orchestration separate from MCP tool exposure.
+- Persist the canonical verified agent answer before emitting it.
+- Require a committed action receipt as the source for write claims.
+- Keep public claims tied to the append-only project evidence log.
+
+## Focused Security Correction
+
+The observed Markdown XSS was fixed and is guarded by regression tests.
+DOMPurify now protects the single AI Markdown rendering boundary. The focused
+fix is recorded in `56d4fc3`, with boundary guard `9d7e889`, rendering-contract
+coverage `29bac52`, and PR #3 merged at `1a026c4`. This was a focused frontend
+correction, not a full security audit, CSP rollout, or backend sanitization
+framework.
+
+## Current Limitations
+
+- Human approval is API-only; there are no browser approval controls.
+- SQLite checkpointing targets a single-process/demo deployment.
+- Live HITL evidence is one local and one Docker success, not a three-run
+  evaluation.
+- Browser terminal-state acceptance used a deterministic zero-Gemini API.
+- Exact token and monetary cost are unknown.
+
+## Evidence Index
+
+The append-only [Project Evidence](docs/PROJECT_EVIDENCE.md) log provides the
+full evidence and limitations for:
+
+- EV-001 — measurable agent baseline
+- EV-002 — LangGraph migration with crash recovery
+- EV-003 — verified agent answer delivery
+- EV-004 — HITL write-note real-model closure
+- EV-005 — HITL write-note production cutover
+- EV-006 — unified Markdown XSS boundary
+
+---
 
 ## v2: Agentic Knowledge Assistant
 
