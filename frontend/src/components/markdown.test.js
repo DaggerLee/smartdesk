@@ -18,6 +18,20 @@ test("renders ordinary Markdown", () => {
 });
 
 
+test("preserves headings, lists, and fenced code blocks", () => {
+  const html = renderMarkdown(
+    "# Heading\n\n- First\n- Second\n\n```js\nconst safe = true;\n```",
+  );
+
+  assert.match(html, /<h1>Heading<\/h1>/);
+  assert.match(html, /<ul>[\s\S]*<li>First<\/li>[\s\S]*<li>Second<\/li>[\s\S]*<\/ul>/);
+  assert.match(
+    html,
+    /<pre><code class="language-js">const safe = true;\n<\/code><\/pre>/,
+  );
+});
+
+
 test("removes executable HTML from Markdown answers", () => {
   const html = renderMarkdown(
     '<img src="missing" onerror="globalThis.xss = true">'

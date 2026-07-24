@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 
 
 const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const chatWindowSource = readFileSync(
+  join(srcDir, "components", "ChatWindow.vue"),
+  "utf8",
+);
 
 
 function sourceFiles(directory) {
@@ -34,6 +38,7 @@ test("keeps a single v-html sink in ChatWindow", () => {
   assert.deepEqual(matchingOccurrences(/\bv-html\s*=/), [
     "components/ChatWindow.vue",
   ]);
+  assert.match(chatWindowSource, /\bv-html="renderMessageContent\(msg\)"/);
 });
 
 
@@ -41,4 +46,8 @@ test("keeps marked.parse inside the sanitized Markdown boundary", () => {
   assert.deepEqual(matchingOccurrences(/\bmarked\.parse\s*\(/), [
     "components/markdown.js",
   ]);
+  assert.match(
+    chatWindowSource,
+    /function renderMessageContent\(msg\)\s*{\s*const html = renderMarkdown\(msg\.answer\);/,
+  );
 });
