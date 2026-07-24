@@ -14,7 +14,6 @@ persisted, and user-visible results drift apart?
 
 | Capability | v1 baseline | v2 today | Evidence |
 |---|---|---|---|
-| Request handling | One linear RAG chain | A router splits `direct`, `rag`, and `agent` requests | EV-001 |
 | Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
 | Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
 | Approval-gated agent actions | No approval-gated write tool | API-approved `write_note`, finalized only from a committed receipt | EV-004, EV-005 |
