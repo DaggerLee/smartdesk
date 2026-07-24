@@ -32,6 +32,8 @@ Full source: `docs-local/reference-AGENTS.md` (gitignored, not committed).
 - Quality standard unchanged: tests green + design decisions explainable.
 - Git: one branch per module (feat/router, feat/agent-loop, feat/self-healing, feat/eval…), commit messages in English, run all tests before merging.
 - **Communicate with the user in Chinese**; all code, comments, API strings, and file content in English.
+- Use plain, everyday Chinese for user-facing communication and minimize technical jargon.
+- When a technical term is necessary, explain it in simple Chinese the first time it appears.
 
 ## Current Context and Delivery Governance
 
