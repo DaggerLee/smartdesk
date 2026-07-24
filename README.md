@@ -17,9 +17,8 @@ persisted, and user-visible results drift apart?
 | Request handling | One linear RAG chain | A router splits `direct`, `rag`, and `agent` requests | EV-001 |
 | Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
 | Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
-| Persistent writes | None | API-approved `write_note`, finalized only from a committed receipt | EV-004, EV-005 |
-| Tool exposure | In-process helpers only | The same tools served over MCP | MCP section below |
-| Measurement | Manual inspection | A 35-item gold set and evaluation harness | EV-001 |
+| Approval-gated agent actions | No approval-gated write tool | API-approved `write_note`, finalized only from a committed receipt | EV-004, EV-005 |
+| Agent-quality evaluation | No versioned gold-set evaluation | A 35-item gold set and evaluation harness | EV-001 |
 | Markdown rendering | Unsanitized `v-html` sink | One sanitized rendering boundary with source-level guards | EV-006 |
 
 Evidence identifiers refer to entries in

@@ -146,6 +146,8 @@ presented as human contributors.
 - Commit A contains accuracy corrections only and remains independently
   mergeable.
 - Commit B contains portfolio presentation only.
+- Commit C contains version-balance correction only and preserves the evidence
+  contract.
 - Every metric and outcome traces to `docs/PROJECT_EVIDENCE.md`.
 - The architecture and HITL diagrams match the implemented topology.
 - `git diff --check` passes, links resolve within the repository, and the
