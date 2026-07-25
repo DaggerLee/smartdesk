@@ -22,7 +22,7 @@ backend/data/
 /data/
 CLAUDE.local.md
 
-# Local job-search working docs (not for the public repo; docs/ reserved for public docs)
+# Local working documents (not for the public repo; docs/ reserved for public docs)
 docs-local/
 
 # Trace logs and local Claude Code config
