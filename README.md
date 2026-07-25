@@ -1,26 +1,140 @@
-# 🤖 SmartDesk — Enterprise Knowledge Assistant
+# SmartDesk — Verified Enterprise Knowledge Assistant
 
-An AI-powered enterprise knowledge base assistant. Upload documents, get accurate answers grounded in your content — with JWT auth, streaming SSE, and one-command Docker deployment.
+SmartDesk is a portfolio-grade knowledge assistant that combines routed RAG,
+LangGraph agent workflows, MCP-exposed tools, measurable evaluation, and an
+API-driven human approval path for persistent writes.
 
-## v2: Agentic Upgrade (in progress)
+## Why This Project
 
-v2 refactors the linear RAG pipeline into a measurable, maintainable agentic system: an LLM **router** dispatches each query to the right path (direct / rag / agent), a hand-written **agent loop** executes multi-turn tool use (retrieve + web search) via Gemini native function calling, **self-healing** mechanisms retry on tool errors and low-relevance retrievals, and a benchmark-driven **eval harness** tracks faithfulness, answer relevancy, and retrieval recall. See [CLAUDE.md — v2 Target Architecture](CLAUDE.md#v2-target-architecture) for the full design.
+The project focuses on a practical engineering question: how can an AI
+assistant use tools and take approved actions without letting checked,
+persisted, and user-visible results drift apart?
 
-**Current progress:** W1 complete (query router + agent loop + native function calling + JSONL tracing + 17 unit tests) — W2 in progress (self-healing three mechanisms + MCP server).
+## From v1 to v2
 
-Full architecture docs and eval results coming with v2.0.
+| Capability | v1 baseline | v2 today | Evidence |
+|---|---|---|---|
+| Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
+| Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
+| Approval-gated agent actions | No approval-gated write tool | API-approved `write_note`, finalized only from a committed receipt | EV-004, EV-005 |
+| Agent-quality evaluation | No versioned gold-set evaluation | A 35-item gold set and evaluation harness | EV-001 |
+| Markdown rendering | Unsanitized `v-html` sink | One sanitized rendering boundary with source-level guards | EV-006 |
+
+Evidence identifiers refer to entries in
+[Project Evidence](docs/PROJECT_EVIDENCE.md).
+
+## Verified Highlights
+
+| Area | Verified result | Evidence |
+|---|---|---|
+| Measurable baseline | 35-item set; 91.7% router accuracy; 94.4% end-to-end contains pass; 88% grounded rate; zero execution errors | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-001 |
+| HITL cutover | 258 backend tests; 5 frontend tests; 73-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
+| Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
+| Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
+
+These baseline metrics are historical evidence, not current statistical
+guarantees. The live HITL evidence is one local and one Docker success, not a
+three-run evaluation. Browser terminal-state acceptance used a deterministic
+zero-Gemini API, not a live-model browser round trip.
+
+## Current Architecture
+
+```mermaid
+flowchart LR
+    U[User] --> V[Vue frontend]
+    V --> F[FastAPI API]
+    F --> R{Router}
+    R --> D[Direct path]
+    R --> G[RAG path]
+    R --> A[LangGraph agent path]
+    G --> C[(ChromaDB)]
+    A --> T[Shared tool layer]
+    T --> C
+    T --> W[Web search]
+    M[FastMCP exposure] --> T
+    A --> Q[(SQLite checkpoints)]
+    A --> X[Verified agent delivery]
+    D --> S[SSE response]
+    G --> S
+    X --> P[(Conversation persistence)]
+    P --> S
+```
+
+- LangGraph owns workflow orchestration.
+- FastMCP exposes the tool layer; it is not the graph engine.
+- SQLite checkpoints are the current single-process/demo durability model.
+- Verified agent delivery commits the canonical answer before SSE emission.
+
+## Human-Approved Write Path
+
+```mermaid
+flowchart TD
+    L[llm_node] --> G[approval_gate]
+    G --> I[interrupt]
+    I --> C["Command(resume)"]
+    C -->|approve or edit| W[write_action_node]
+    G -->|reject| F[action_finalize_node]
+    W --> F
+    F -->|"verification_source: action_receipt; bypass groundedness"| E[END]
+```
+
+The graph pauses before the file write. Approval or an edited payload resumes
+the write path; rejection skips the write. Both outcomes finalize from the
+action receipt, and write claims do not pass through the ordinary answer
+groundedness path.
+
+## Engineering Decisions
+
+- Route simple, retrieval, and tool-using requests separately.
+- Keep LangGraph orchestration separate from MCP tool exposure.
+- Persist the canonical verified agent answer before emitting it.
+- Require a committed action receipt as the source for write claims.
+- Keep public claims tied to the append-only project evidence log.
+
+## Focused Security Correction
+
+The observed Markdown XSS was fixed and is guarded by regression tests.
+DOMPurify now protects the single AI Markdown rendering boundary. The focused
+fix is recorded in `56d4fc3`, with boundary guard `9d7e889`, rendering-contract
+coverage `29bac52`, and PR #3 merged at `1a026c4`. This was a focused frontend
+correction, not a full security audit, CSP rollout, or backend sanitization
+framework.
+
+## Current Limitations
+
+- Human approval is API-only; there are no browser approval controls.
+- SQLite checkpointing targets a single-process/demo deployment.
+- Live HITL evidence is one local and one Docker success, not a three-run
+  evaluation.
+- Browser terminal-state acceptance used a deterministic zero-Gemini API.
+- Exact token and monetary cost are unknown.
+
+## Evidence Index
+
+The append-only [Project Evidence](docs/PROJECT_EVIDENCE.md) log provides the
+full evidence and limitations for:
+
+- EV-001 — measurable agent baseline
+- EV-002 — LangGraph migration with crash recovery
+- EV-003 — verified agent answer delivery
+- EV-004 — HITL write-note real-model closure
+- EV-005 — HITL write-note production cutover
+- EV-006 — unified Markdown XSS boundary
 
 ---
 
-## v1 (baseline) — Screenshots
+<details>
+<summary><b>v1 baseline (historical) — screenshots, features, and stack</b></summary>
 
-### Main Interface
+### v1 screenshots
+
+**Main interface**
 ![Main](screenshot-main.png)
 
-### AI-Powered Q&A with Source Citation
+**AI-powered Q&A with source citation**
 ![Chat](screenshot-chat.png)
 
-## v1 (baseline) — Features
+### v1 features
 
 - 📚 **Knowledge Base Management** — Create multiple knowledge bases, each isolated per user
 - 📄 **Document Ingestion** — Upload PDF and TXT files; automatically parsed, chunked, and indexed
@@ -35,19 +149,21 @@ Full architecture docs and eval results coming with v2.0.
 - 🔐 **JWT Authentication** — User registration/login with bcrypt password hashing; each user's data is fully isolated
 - 🐳 **Docker Deployment** — One-command startup with docker-compose
 
-## v1 (baseline) — Tech Stack
+### v1 tech stack
 
 | Layer | Technologies |
 |-------|-------------|
 | Frontend | Vue 3, Vite, Nginx |
 | Backend | Python, FastAPI |
-| AI | Google Gemini API (gemini-1.5-flash) |
+| AI | Google Gemini API |
 | Vector DB | ChromaDB (local persistent storage) |
 | Database | SQLite |
 | Auth | JWT (HS256) + bcrypt |
 | Deployment | Docker, docker-compose |
 
-## Quick Start (Docker) — works for both v1 and v2
+</details>
+
+## Quick Start (Docker)
 
 ```bash
 git clone https://github.com/DaggerLee/smartdesk.git
@@ -77,7 +193,8 @@ npm run dev
 
 Open http://localhost:5173
 
-## v1 (baseline) — Architecture
+<details>
+<summary><b>v1 baseline (historical) — original linear pipeline</b></summary>
 
 ```
 User Query
@@ -95,7 +212,9 @@ RAG Quality Check (ChromaDB cosine distance threshold)
 SSE Stream → [SOURCE_USED] / [WEB_USED] markers → Source Cards
 ```
 
-## v1 (baseline) — API Endpoints
+</details>
+
+## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -103,9 +222,12 @@ SSE Stream → [SOURCE_USED] / [WEB_USED] markers → Source Cards
 | POST | /api/auth/login | Login, returns JWT |
 | GET | /api/knowledge-base | List user's knowledge bases |
 | POST | /api/knowledge-base | Create knowledge base |
+| DELETE | /api/knowledge-base/{kb_id} | Delete knowledge base |
+| GET | /api/knowledge-base/{kb_id}/files | List knowledge-base files |
 | POST | /api/knowledge-base/{id}/upload | Upload document |
 | DELETE | /api/knowledge-base/{id}/files/{filename} | Delete document |
-| POST | /api/chat/stream | RAG chat (streaming SSE) |
+| POST | /api/chat/stream | Routed chat (streaming SSE) |
+| POST | /api/chat/actions/{thread_id}/resolve | Approve, edit, or reject and resume a pending write |
 | GET | /api/chat/history/{kb_id} | Get conversation history |
 
 ## MCP Server
