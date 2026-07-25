@@ -149,20 +149,25 @@ code, control flow, runtime behavior, or other comment changes.
 
 ## Private ownership
 
-The following is described here for completeness and must not be implemented in
-this repository by this task.
+This section states a boundary. It does not assert that any migration has
+already happened.
 
-- SmartDesk-specific collaboration detail belongs to the gitignored
-  `CLAUDE.local.md`.
-- General agent governance, including conflict resolution order, evidence
-  states, evaluation methodology, recovery protocol, reporting format, and
-  capability provenance routing, belongs to AI Manager OS, which already owns
-  those rules.
-- `docs-local/SmartDesk_Decisions.md` and `docs-local/CURRENT.md` remain
-  private and unchanged.
-- This task does not copy, create, migrate, or commit any private content. No
-  rule is deleted from the project as a whole; each rule keeps exactly one
-  owner, and only the public copy disappears.
+- This task removes only the public copies of the affected rules. It performs
+  no migration.
+- The intended private homes are the gitignored `CLAUDE.local.md` for
+  SmartDesk-specific collaboration detail and AI Manager OS for general agent
+  governance. Whether a given rule already exists in either place is not
+  re-verified by this design and must not be claimed here.
+- Private migration and any modification of private files are outside this
+  repository task. `docs-local/SmartDesk_Decisions.md` and
+  `docs-local/CURRENT.md` remain private and untouched.
+- Removing a rule from the public surface is not a claim that a private copy
+  exists. This task is not required to create private copies for personal
+  working habits or general governance; those are simply removed from the
+  public instruction surface.
+- Repository-specific safety rules that an external agent genuinely needs are
+  not subject to this removal. They stay in `AGENTS.md`, as listed in the
+  retain set above.
 
 ## Scope
 
@@ -206,12 +211,16 @@ remove.
 **Delete `CLAUDE.md` entirely.**
 
 This is a legitimate option and is strictly better than synchronizing two
-files. It was not adopted because `backend/agent/graph.py` references the
-filename and because Claude Code treats that filename as the project
-instruction convention. A two-line pointer removes the duplicate authority at
-negligible cost while keeping both references resolvable. If the human later
-prefers one fewer file, deletion remains available and requires only the same
-`graph.py` comment correction already planned here.
+files. It was not adopted for these reasons:
+
+- Claude Code treats `CLAUDE.md` as the project-level instruction convention,
+  so the filename remains a discovery entry point for that tool.
+- A two-line pointer lets different tools arrive at the same single authority
+  in `AGENTS.md` instead of looking for separate conventions.
+- The pointer carries no rules, so it cannot re-form the dual authority this
+  design removes.
+- If a compatibility entry point is later confirmed unnecessary, `CLAUDE.md`
+  can be deleted independently at that time.
 
 ## Risks and controls
 
@@ -233,8 +242,10 @@ requires `CLAUDE.md` to contain only a heading and two links.
 **Risk:** removing `docs-local/` references could make the private handoff
 protocol look abandoned.
 
-**Control:** the private layer already exists and is unchanged; the fresh-task
-startup rule moves to `CLAUDE.local.md`, next to the private files it names.
+**Control:** the private layer is outside this task and is left unchanged. The
+public files stop naming private paths they cannot resolve; where the
+fresh-task startup rule ultimately lives is a separate private decision that
+this design neither performs nor asserts.
 
 ## Non-goals
 
