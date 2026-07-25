@@ -61,7 +61,9 @@ Retain:
   reintroduction;
 - Python 3.11+;
 - English for code, comments, API strings, and file content;
-- the single-module wrapper constraint for all LLM calls;
+- the rule that provider-facing LLM calls stay behind the existing client
+  wrappers, `backend/llm/client.py` and `backend/gemini_client.py`, and that
+  business logic never calls a provider API directly;
 - secrets only through environment variables, never committed and never printed
   as values;
 - the requirement to inform the human of scope before any real Gemini call or
@@ -143,9 +145,13 @@ byte-identical.
 
 ### backend/agent/graph.py
 
-One existing comment currently attributes the single-client-module constraint
-to `CLAUDE.md`. It is corrected to name the repository rule in `AGENTS.md`. No
-code, control flow, runtime behavior, or other comment changes.
+One existing comment attributes an LLM-client constraint to `CLAUDE.md`. It is
+corrected to cite the repository rule in `AGENTS.md` and to describe the real
+wrapper boundary: no node uses a LangChain `BaseChatModel`, and this module's
+LLM calls go through SmartDesk's own plain Gemini REST wrappers. The comment
+must not claim that every LLM call goes through `backend/llm/client.py`, because
+`backend/gemini_client.py` is still used by production code. No code, control
+flow, runtime behavior, or other comment changes.
 
 ## Private ownership
 

@@ -926,9 +926,9 @@ def stream_graph(
     "values" carries the full GraphState after every superstep; only the last
     one (the completed state) is used, as the "final" event. stream_mode
     "messages" isn't an option here — it taps token events from LangChain
-    BaseChatModel invocations, and no node calls one (all LLM calls go through
-    llm/client.py's plain Gemini REST wrapper, per the single-client-module
-    repository rule in AGENTS.md). "updates" was also considered and rejected: it
+    BaseChatModel invocations, and no node calls one — this module's LLM calls
+    use SmartDesk's own plain Gemini REST wrappers, per the provider-wrapper
+    repository rule in AGENTS.md. "updates" was also considered and rejected: it
     would hand back each node's partial-state diff separately, requiring the
     caller to manually re-merge ~7 nodes' worth of diffs to reconstruct what
     "values" already assembles for free.

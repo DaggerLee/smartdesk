@@ -27,9 +27,9 @@ frontend.
 
 - Python 3.11+.
 - All code, comments, API strings, and file content are written in English.
-- All LLM calls go through the single client module
-  (`backend/llm/client.py`); switching providers must not touch business
-  code.
+- Keep provider-facing LLM calls behind the existing client wrappers
+  (`backend/llm/client.py` and `backend/gemini_client.py`); do not call
+  provider APIs directly from business logic.
 - Use a minimal diff. Preserve all behavior outside the accepted task scope;
   no drive-by refactors, renames, or formatting changes in unrelated files.
 - A bug fix is not complete until its reintroduction would be caught by a
