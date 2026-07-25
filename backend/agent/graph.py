@@ -928,7 +928,7 @@ def stream_graph(
     "messages" isn't an option here — it taps token events from LangChain
     BaseChatModel invocations, and no node calls one (all LLM calls go through
     llm/client.py's plain Gemini REST wrapper, per the single-client-module
-    constraint in CLAUDE.md). "updates" was also considered and rejected: it
+    repository rule in AGENTS.md). "updates" was also considered and rejected: it
     would hand back each node's partial-state diff separately, requiring the
     caller to manually re-merge ~7 nodes' worth of diffs to reconstruct what
     "values" already assembles for free.
