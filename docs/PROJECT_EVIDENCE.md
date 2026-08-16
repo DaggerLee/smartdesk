@@ -172,10 +172,16 @@ pending controls only after the canonical receipt answer is delivered.
 - Frontend parser/state verification after implementation: 20 tests passed via
   `node --test src/**/*.test.js`.
 - Production build completed with 75 transformed modules via `npm run build`.
+- Browser smoke used a deterministic zero-Gemini fixture against the real Vite
+  frontend in headless Chromium. It selected a knowledge base, submitted two
+  chat requests, rendered the approval card, approved the first proposal,
+  rejected the second proposal, observed both canonical receipt answers, and
+  asserted the resolve payloads were exactly
+  `{action_id:"action-1", decision:"approve"}` and
+  `{action_id:"action-2", decision:"reject"}`.
 - No backend route, schema, model, or Gemini integration changed.
 
 **Limitations:** Approval controls are current-page state only. Refresh
 recovery, pending-action lists, Note CRUD/list APIs, and cross-session approval
-queues remain outside scope. The local Browser tool could not launch Chromium
-in this environment, so this entry does not claim visual browser acceptance or
-another live-model browser run.
+queues remain outside scope. The browser smoke was deterministic and local; it
+does not claim another live-model browser run or paid Gemini request.

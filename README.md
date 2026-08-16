@@ -31,14 +31,14 @@ Evidence identifiers refer to entries in
 | HITL cutover | 258 backend tests; 5 frontend tests; 73-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
-| Browser approval controls | Current-page approve/edit/reject controls; 20 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
+| Browser approval controls | Current-page approve/reject visual smoke; 20 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
 
 These baseline metrics are historical evidence, not current statistical
 guarantees. The live HITL evidence is one local and one Docker success, not a
 three-run evaluation. Browser terminal-state acceptance used a deterministic
 zero-Gemini API, not a live-model browser round trip. Browser approval controls
-are covered by deterministic parser/state tests; a Chromium visual run was not
-available in this environment.
+were smoke-tested with a deterministic zero-Gemini browser fixture, not a
+live-model browser round trip.
 
 ## Current Architecture
 
