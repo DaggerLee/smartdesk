@@ -25,6 +25,43 @@ The configuration-consolidation change keeps behavior unchanged for legal
 invalid values from silent tolerance to fail-fast rejection. The final default
 switch remains free of runtime orchestration changes.
 
+### 2026-08-15 browser approval-controls amendment
+
+The API-only HITL workflow is now accepted as the production default, but
+`write_note` approval remains invisible in the browser. This amendment permits
+one current-page approval surface for the existing `confirmation_required`
+SSE event. The browser may approve the original proposal, submit a complete
+edited title/content pair, or reject with an optional reason by calling the
+existing strict resolve endpoint.
+
+This amendment does not authorize a Note CRUD/list API, approval queue,
+cross-session pending-action recovery, refresh continuity, global retry
+machinery, real Gemini smoke, or backend schema expansion. The page lifecycle
+is deliberately narrow: controls are shown only for the chat message that
+received `confirmation_required` in the current page session. Refreshing the
+page may lose the client controls; the checkpointed API state remains the
+server source of truth.
+
+Acceptance for this amendment is evidence-bound:
+
+1. before any production code change, frontend tests must fail for the missing
+   browser approval state and resolve call;
+2. approving from the browser sends only `{action_id, decision: "approve"}`,
+   disables duplicate submits, consumes the resolve SSE stream, displays the
+   committed receipt answer, and clears the pending controls;
+3. editing from the browser requires complete title and content, sends no
+   original payload, displays the committed receipt answer, and clears the
+   pending controls;
+4. rejecting from the browser sends only the action ID, decision, and optional
+   reason, displays the canonical rejection result, and clears the pending
+   controls;
+5. resolve failures and `[FAILED]` terminals leave the message non-streaming
+   with a visible failure state and no fake success answer;
+6. browser verification must use a deterministic zero-Gemini API fixture. A
+   live Gemini browser run remains outside this amendment unless the user
+   separately approves the paid request scope.
+
+
 ## Goal
 
 Build the minimum end-to-end human-in-the-loop write workflow on the existing
@@ -39,9 +76,10 @@ write_note proposal
 -> receipt-derived final result
 ```
 
-The first release writes Markdown files under the existing persistent `data`
-directory. It does not add a Note database table, note CRUD API, note list, or
-interactive approval UI.
+The initial 2026-07-22 release wrote Markdown files under the existing
+persistent `data` directory. It did not add a Note database table, note CRUD
+API, note list, or interactive approval UI. The 2026-08-15 amendment permits
+only the narrow current-page approval controls described above.
 
 ## Governing invariants
 
@@ -610,7 +648,7 @@ Implementation delivery is separated into:
 3. deterministic and gold verification;
 4. user-notified real smoke gate;
 5. browser-level `[PAUSED]` / `[FAILED]` visual acceptance;
-6. a pre-cutover governance amendment;
+6. a browser approval-controls amendment and acceptance brief;
 7. an ordinary graph Conversation persistence correction with defaults
    unchanged;
 8. a backend configuration-consolidation commit with defaults unchanged;
