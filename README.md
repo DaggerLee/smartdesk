@@ -1,8 +1,8 @@
 # SmartDesk — Verified Enterprise Knowledge Assistant
 
 SmartDesk is a portfolio-grade knowledge assistant that combines routed RAG,
-LangGraph agent workflows, MCP-exposed tools, measurable evaluation, and an
-API-driven human approval path for persistent writes.
+LangGraph agent workflows, MCP-exposed tools, measurable evaluation, and a
+browser-assisted human approval path for persistent writes.
 
 ## Why This Project
 
@@ -16,7 +16,7 @@ persisted, and user-visible results drift apart?
 |---|---|---|---|
 | Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
 | Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
-| Approval-gated agent actions | No approval-gated write tool | API-approved `write_note`, finalized only from a committed receipt | EV-004, EV-005 |
+| Approval-gated agent actions | No approval-gated write tool | Browser-assisted `write_note` approval, finalized only from a committed receipt | EV-004, EV-005, EV-007 |
 | Agent-quality evaluation | No versioned gold-set evaluation | A 35-item gold set and evaluation harness | EV-001 |
 | Markdown rendering | Unsanitized `v-html` sink | One sanitized rendering boundary with source-level guards | EV-006 |
 
@@ -31,11 +31,14 @@ Evidence identifiers refer to entries in
 | HITL cutover | 258 backend tests; 5 frontend tests; 73-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
+| Browser approval controls | Current-page approve/edit/reject controls; 20 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
 
 These baseline metrics are historical evidence, not current statistical
 guarantees. The live HITL evidence is one local and one Docker success, not a
 three-run evaluation. Browser terminal-state acceptance used a deterministic
-zero-Gemini API, not a live-model browser round trip.
+zero-Gemini API, not a live-model browser round trip. Browser approval controls
+are covered by deterministic parser/state tests; a Chromium visual run was not
+available in this environment.
 
 ## Current Architecture
 
@@ -78,10 +81,11 @@ flowchart TD
     F -->|"verification_source: action_receipt; bypass groundedness"| E[END]
 ```
 
-The graph pauses before the file write. Approval or an edited payload resumes
-the write path; rejection skips the write. Both outcomes finalize from the
-action receipt, and write claims do not pass through the ordinary answer
-groundedness path.
+The graph pauses before the file write. The browser can approve the original
+proposal, submit a complete edited payload, or reject the proposal for the
+current page's pending action. Resolution still goes through the strict API
+endpoint; both write and reject outcomes finalize from the action receipt, and
+write claims do not pass through the ordinary answer groundedness path.
 
 ## Engineering Decisions
 

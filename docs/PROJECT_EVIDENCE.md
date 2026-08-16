@@ -152,3 +152,30 @@ boundary.
 content-security-policy rollout or a backend sanitization framework. Separate
 observations about narrow-screen layout, interrupted SSE state, and paused
 flow refresh continuity remain deferred and are not claimed as fixed.
+
+## EV-007 — Browser approval controls
+
+**Problem:** The default HITL write path could pause and resolve through the
+API, but the browser exposed only a terminal waiting state. A user could not
+approve, edit, or reject the pending `write_note` proposal from the page.
+
+**Delivered:** The current chat page now stores the `confirmation_required`
+payload on the paused message, renders one approval card, and resolves through
+the existing strict `/api/chat/actions/{thread_id}/resolve` SSE endpoint.
+Approve sends no title/content, edit sends a complete replacement title and
+content, and reject omits a blank reason. Successful resolve streams clear the
+pending controls only after the canonical receipt answer is delivered.
+
+**Evidence:**
+
+- Frozen-spec amendment and acceptance brief: `d8c7cd2`.
+- Frontend parser/state verification after implementation: 20 tests passed via
+  `node --test src/**/*.test.js`.
+- Production build completed with 75 transformed modules via `npm run build`.
+- No backend route, schema, model, or Gemini integration changed.
+
+**Limitations:** Approval controls are current-page state only. Refresh
+recovery, pending-action lists, Note CRUD/list APIs, and cross-session approval
+queues remain outside scope. The local Browser tool could not launch Chromium
+in this environment, so this entry does not claim visual browser acceptance or
+another live-model browser run.
