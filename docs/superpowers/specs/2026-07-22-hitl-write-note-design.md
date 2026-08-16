@@ -27,9 +27,9 @@ switch remains free of runtime orchestration changes.
 
 ### 2026-08-15 browser approval-controls amendment
 
-The API-only HITL workflow is now accepted as the production default, but
-`write_note` approval remains invisible in the browser. This amendment permits
-one current-page approval surface for the existing `confirmation_required`
+The API-only HITL workflow is accepted as the production default, and
+`write_note` approval previously remained invisible in the browser. This
+amendment permits one current-page approval surface for the existing
 SSE event. The browser may approve the original proposal, submit a complete
 edited title/content pair, or reject with an optional reason by calling the
 existing strict resolve endpoint.
@@ -108,8 +108,8 @@ In scope:
 - Structured `approve | edit | reject` resolution.
 - Per-user Markdown files under the existing Docker volume.
 - Deterministic receipt-derived final answers.
-- API-only approval driven by tests or curl.
-- Minimal frontend handling for `[PAUSED]` and `[FAILED]`.
+- Current-page browser controls for approving the original proposal, submitting
+  a complete edited payload, or rejecting the proposal.
 - A guarded, independently revertible LangGraph production cutover.
 
 Not in scope:
@@ -551,17 +551,17 @@ graph requests insert by thread ID. A duplicate completion reuses a row only
 when KB, question, and answer match exactly; otherwise it conflicts. This
 mapping is not a second action source of truth.
 
-## API-only client boundary
+## Current-page browser approval boundary
 
-Version 1 approval is driven by the resolve API, tests, or curl. Approval
-buttons are a separate product task.
+The frontend may expose approval controls only for the paused message that
+received `confirmation_required` in the current page session. The resolve API
+remains the authority boundary: the client supplies no user ID, approval sends
+no title/content, edit sends a complete replacement title/content pair, and
+reject sends no title/content with only an optional nonblank reason.
 
-The current frontend must nevertheless recognize `[PAUSED]` and `[FAILED]`,
-end loading for both, and avoid rendering either token as answer text.
-`[PAUSED]` displays at least a status that the operation is waiting for
-confirmation. Tests prove both terminal tokens settle the request correctly.
-The design does not claim the existing client necessarily hangs forever when
-a stream ends naturally; the new behavior is explicit and test-backed.
+Refresh recovery, pending-action queues, Note CRUD/list APIs, and cross-session
+approval recovery are separate product tasks. Browser terminal-token behavior
+for `[PAUSED]` and `[FAILED]` remains explicit and test-backed.
 
 ## Trace and privacy
 

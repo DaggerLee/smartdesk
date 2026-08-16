@@ -180,6 +180,28 @@ test("resolveActionStream posts a strict resolution and streams canonical answer
 });
 
 
+test("resolveActionStream treats empty EOF as failed", async () => {
+  globalThis.fetch = async () => responseWithFrames([]);
+  const observed = { chunks: [], done: 0, failed: 0 };
+
+  await resolveActionStream(
+    "thread-1",
+    { action_id: "action-1", decision: "approve" },
+    {
+      onChunk: (chunk) => observed.chunks.push(chunk),
+      onDone: () => observed.done++,
+      onFailed: () => observed.failed++,
+    },
+  );
+
+  assert.deepEqual(observed, {
+    chunks: [],
+    done: 0,
+    failed: 1,
+  });
+});
+
+
 test("resolveActionStream treats EOF without DONE as failed", async () => {
   globalThis.fetch = async () => responseWithFrames([
     'data: "partial receipt answer"\n\n',

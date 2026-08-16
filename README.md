@@ -106,11 +106,13 @@ framework.
 
 ## Current Limitations
 
-- Human approval is API-only; there are no browser approval controls.
+- Browser approval controls are current-page only; refresh recovery and a
+  pending-action queue remain out of scope.
 - SQLite checkpointing targets a single-process/demo deployment.
 - Live HITL evidence is one local and one Docker success, not a three-run
   evaluation.
-- Browser terminal-state acceptance used a deterministic zero-Gemini API.
+- Browser terminal-state and approval-control acceptance used deterministic
+  zero-Gemini fixtures.
 - Exact token and monetary cost are unknown.
 
 ## Evidence Index
