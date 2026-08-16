@@ -169,9 +169,11 @@ pending controls only after the canonical receipt answer is delivered.
 **Evidence:**
 
 - Frozen-spec amendment and acceptance brief: `d8c7cd2`.
-- Frontend parser/state verification after implementation: 20 tests passed via
+- Frontend parser/state verification after implementation: 21 tests passed via
   `node --test src/**/*.test.js`.
 - Production build completed with 75 transformed modules via `npm run build`.
+- Backend regression suite passed after isolating eval delivery-policy tests
+  from local retrieval database state: 258 tests passed via `pytest`.
 - Browser smoke used a deterministic zero-Gemini fixture against the real Vite
   frontend in headless Chromium. It selected a knowledge base, submitted two
   chat requests, rendered the approval card, approved the first proposal,

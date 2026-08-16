@@ -31,7 +31,7 @@ Evidence identifiers refer to entries in
 | HITL cutover | 258 backend tests; 5 frontend tests; 73-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
-| Browser approval controls | Current-page approve/reject visual smoke; 20 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
+| Browser approval controls | Current-page approve/reject visual smoke; 21 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
 
 These baseline metrics are historical evidence, not current statistical
 guarantees. The live HITL evidence is one local and one Docker success, not a
