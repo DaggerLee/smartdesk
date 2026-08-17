@@ -92,12 +92,14 @@ def test_enabled_langgraph_eval_scores_the_payload_users_receive(monkeypatch):
 
     with patch.object(run_eval, "_AGENT_BACKEND", "langgraph"), \
          patch("eval.run_eval._router_route", return_value="agent"), \
+         patch("eval.run_eval.RetrieveTool") as retrieve_cls, \
          patch(
              "eval.run_eval._run_agent_path",
              return_value=("raw rejected answer", [], False, "rejected"),
          ), \
          patch("eval.run_eval._faithfulness", return_value=1.0), \
          patch("eval.run_eval._answer_relevancy", return_value=1.0):
+        retrieve_cls.return_value.run.return_value = {"chunks": [], "relevance_ok": False}
         result = run_eval.eval_item(item)
 
     assert result.answer == UNSUPPORTED_ANSWER_NOTICE
@@ -121,12 +123,14 @@ def test_disabled_langgraph_eval_labels_internal_answer(monkeypatch):
 
     with patch.object(run_eval, "_AGENT_BACKEND", "langgraph"), \
          patch("eval.run_eval._router_route", return_value="agent"), \
+         patch("eval.run_eval.RetrieveTool") as retrieve_cls, \
          patch(
              "eval.run_eval._run_agent_path",
              return_value=("internal answer", [], True, "verified"),
          ), \
          patch("eval.run_eval._faithfulness", return_value=1.0), \
          patch("eval.run_eval._answer_relevancy", return_value=1.0):
+        retrieve_cls.return_value.run.return_value = {"chunks": [], "relevance_ok": False}
         result = run_eval.eval_item(item)
 
     assert result.answer == "internal answer"

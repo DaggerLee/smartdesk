@@ -81,6 +81,80 @@
           <div class="ai-content">
             <div class="bubble ai-bubble" v-html="renderMessageContent(msg)"></div>
             <div v-if="msg.statusText" class="status-indicator">{{ msg.statusText }}</div>
+            <div v-if="msg.pendingAction" class="approval-card">
+              <div class="approval-label">Write note approval</div>
+              <div class="approval-field">
+                <span class="approval-field-label">Title</span>
+                <span>{{ msg.pendingAction.title }}</span>
+              </div>
+              <div class="approval-preview">{{ msg.pendingAction.content }}</div>
+              <div class="approval-actions">
+                <button
+                  class="btn-approval primary"
+                  :disabled="msg.pendingAction.resolving"
+                  @click="submitApproval(msg, 'approve')"
+                >
+                  Approve
+                </button>
+                <button
+                  class="btn-approval"
+                  :disabled="msg.pendingAction.resolving"
+                  @click="msg.pendingAction.mode = 'edit'"
+                >
+                  Edit
+                </button>
+                <button
+                  class="btn-approval danger"
+                  :disabled="msg.pendingAction.resolving"
+                  @click="msg.pendingAction.mode = 'reject'"
+                >
+                  Reject
+                </button>
+              </div>
+              <div v-if="msg.pendingAction.mode === 'edit'" class="approval-form">
+                <label>
+                  Edited title
+                  <input
+                    v-model="msg.pendingAction.editTitle"
+                    :disabled="msg.pendingAction.resolving"
+                  />
+                </label>
+                <label>
+                  Edited content
+                  <textarea
+                    v-model="msg.pendingAction.editContent"
+                    :disabled="msg.pendingAction.resolving"
+                    rows="4"
+                  ></textarea>
+                </label>
+                <button
+                  class="btn-approval primary"
+                  :disabled="msg.pendingAction.resolving"
+                  @click="submitApproval(msg, 'edit')"
+                >
+                  Submit edit
+                </button>
+              </div>
+              <div v-if="msg.pendingAction.mode === 'reject'" class="approval-form">
+                <label>
+                  Reject reason (optional)
+                  <input
+                    v-model="msg.pendingAction.rejectReason"
+                    :disabled="msg.pendingAction.resolving"
+                  />
+                </label>
+                <button
+                  class="btn-approval danger"
+                  :disabled="msg.pendingAction.resolving"
+                  @click="submitApproval(msg, 'reject')"
+                >
+                  Confirm reject
+                </button>
+              </div>
+              <div v-if="msg.pendingAction.error" class="approval-error">
+                {{ msg.pendingAction.error }}
+              </div>
+            </div>
             <!-- Sources -->
             <div v-if="msg.sources && msg.sources.length > 0" class="sources">
               <div class="sources-label">Sources</div>
@@ -142,9 +216,23 @@
 
 <script setup>
 import { nextTick, ref, watch } from "vue";
-import { clearChatHistory, deleteFile, getChatHistory, listFiles, sendMessageStream } from "../api/index.js";
+import {
+  clearChatHistory,
+  deleteFile,
+  getChatHistory,
+  listFiles,
+  resolveActionStream,
+  sendMessageStream,
+} from "../api/index.js";
 import { renderMarkdown } from "./markdown.js";
-import { settleTerminalMessage } from "./chatStreamState.js";
+import {
+  attachPendingAction,
+  beginResolveAction,
+  buildActionResolution,
+  failResolveAction,
+  finishResolvedAction,
+  settleTerminalMessage,
+} from "./chatStreamState.js";
 import FileUpload from "./FileUpload.vue";
 
 const props = defineProps({
@@ -195,7 +283,15 @@ async function handleSend() {
 
   // Optimistically add the user message with an empty streaming answer
   const tempId = Date.now();
-  messages.value.push({ id: tempId, question: text, answer: "", sources: [], streaming: true, statusText: "" });
+  messages.value.push({
+    id: tempId,
+    question: text,
+    answer: "",
+    sources: [],
+    streaming: true,
+    statusText: "",
+    pendingAction: null,
+  });
   await nextTick();
   scrollToBottom();
 
@@ -242,6 +338,12 @@ async function handleSend() {
           settleTerminalMessage(messages.value[idx], "failed");
         }
       },
+      (confirmation) => {
+        const idx = messages.value.findIndex((m) => m.id === tempId);
+        if (idx !== -1) {
+          attachPendingAction(messages.value[idx], confirmation);
+        }
+      },
     );
   } catch (err) {
     const idx = messages.value.findIndex((m) => m.id === tempId);
@@ -251,6 +353,42 @@ async function handleSend() {
     }
   } finally {
     sending.value = false;
+    await nextTick();
+    scrollToBottom();
+  }
+}
+
+async function submitApproval(msg, decision) {
+  if (!msg.pendingAction) return;
+  msg.pendingAction.mode = decision;
+  let resolution;
+  try {
+    resolution = buildActionResolution(msg.pendingAction);
+  } catch (err) {
+    msg.pendingAction.error = err.message;
+    return;
+  }
+  if (!beginResolveAction(msg)) return;
+
+  try {
+    await resolveActionStream(msg.pendingAction.threadId, resolution, {
+      onChunk: (chunk) => {
+        msg.answer += chunk;
+        scrollToBottom();
+      },
+      onDone: () => {
+        finishResolvedAction(msg);
+      },
+      onStatus: (status) => {
+        msg.statusText = status;
+      },
+      onFailed: () => {
+        failResolveAction(msg);
+      },
+    });
+  } catch (err) {
+    failResolveAction(msg, err.message);
+  } finally {
     await nextTick();
     scrollToBottom();
   }
@@ -732,6 +870,109 @@ function resetTextarea() {
 .summary-pending {
   font-style: italic;
   color: #a16207;
+}
+
+/* ── Approval controls ── */
+.approval-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  color: #7c2d12;
+}
+
+.approval-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.approval-field {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.approval-field-label {
+  font-weight: 700;
+}
+
+.approval-preview {
+  max-height: 140px;
+  overflow: auto;
+  padding: 8px;
+  background: #fffbeb;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approval-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.approval-form input,
+.approval-form textarea {
+  width: 100%;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  padding: 7px 8px;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.btn-approval {
+  padding: 6px 12px;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  background: #fff;
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.btn-approval.primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.btn-approval.danger {
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+.btn-approval:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.approval-error {
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* ── Sources ── */
