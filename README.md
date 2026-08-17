@@ -17,7 +17,7 @@ persisted, and user-visible results drift apart?
 | Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
 | Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
 | Approval-gated agent actions | No approval-gated write tool | Browser-assisted `write_note` approval, finalized only from a committed receipt | EV-004, EV-005, EV-007 |
-| Agent-quality evaluation | No versioned gold-set evaluation | A 35-item gold set and evaluation harness | EV-001 |
+| Agent-quality evaluation | No versioned gold-set evaluation | Original 35-item harness, now maintained as a 36-item regression set | EV-001 |
 | Markdown rendering | Unsanitized `v-html` sink | One sanitized rendering boundary with source-level guards | EV-006 |
 
 Evidence identifiers refer to entries in
@@ -27,18 +27,19 @@ Evidence identifiers refer to entries in
 
 | Area | Verified result | Evidence |
 |---|---|---|
-| Measurable baseline | 35-item set; 91.7% router accuracy; 94.4% end-to-end contains pass; 88% grounded rate; zero execution errors | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-001 |
+| Measurable baseline | Historical baseline: 91.7% router accuracy; 94.4% end-to-end contains pass; 88% grounded rate; zero execution errors | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-001 |
 | HITL cutover | 258 backend tests; 5 frontend tests; 73-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
 | Browser approval controls | Current-page approve/reject visual smoke; 21 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
 
-These baseline metrics are historical evidence, not current statistical
-guarantees. The live HITL evidence is one local and one Docker success, not a
-three-run evaluation. Browser terminal-state acceptance used a deterministic
-zero-Gemini API, not a live-model browser round trip. Browser approval controls
-were smoke-tested with a deterministic zero-Gemini browser fixture, not a
-live-model browser round trip.
+These baseline metrics are historical regression evidence, not current
+statistical guarantees or fresh-holdout generalization results. The maintained
+gold set currently has 36 items; any future benchmark-refresh claim should lock
+a fresh holdout before model runs and report it separately from the regression
+set. The live HITL evidence is one local and one Docker success, not a three-run
+evaluation. Browser terminal-state acceptance used deterministic zero-Gemini
+fixtures, not live-model browser round trips.
 
 ## Current Architecture
 

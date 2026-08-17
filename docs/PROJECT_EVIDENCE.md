@@ -6,16 +6,23 @@ This append-only log records verified engineering outcomes that can be traced to
 
 **Problem:** Agent changes could not be judged objectively without a stable evaluation contract.
 
-**Delivered:** A 35-item gold set and evaluation harness covering routing, retrieval, answer keywords, groundedness, faithfulness, and answer relevancy.
+**Delivered:** An original 35-item gold-set harness, now maintained as a 36-item regression set, covering routing, retrieval, answer keywords, groundedness, faithfulness, and answer relevancy.
 
 **Evidence:**
 
 - Baseline commit: `e8dddab`
 - Harness commit: `a6c2acc`
 - Recorded baseline: router accuracy 91.7%, end-to-end contains pass 94.4%, grounded rate 88%, zero execution errors.
-- Later safeguards added run locking, resume, tracked-dirty-tree rejection, per-run archives, and same-period baseline comparison.
+- Later gold-set maintenance brought `backend/eval/gold_set.jsonl` to 36 items;
+  the historical metrics above remain tied to their recorded runs rather than a
+  fresh holdout.
+- Later safeguards added run locking, resume, tracked-dirty-tree rejection,
+  per-run archives, and same-period baseline comparison.
 
-**Limitations:** LLM metrics are stochastic. Formal comparisons require contemporary three-run means; historical pooled numbers are trend context only.
+**Limitations:** LLM metrics are stochastic. Formal comparisons require
+contemporary three-run means; historical pooled numbers are trend context only.
+The maintained 36-item set is regression evidence after repeated use, not proof
+of fresh-holdout generalization.
 
 ## EV-002 — LangGraph migration with crash recovery
 
