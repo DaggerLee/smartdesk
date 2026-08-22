@@ -33,6 +33,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -189,14 +190,26 @@ class ItemResult:
 
 # ── Gold set loader ────────────────────────────────────────────────────────────
 
-def _load_gold(limit: Optional[int] = None) -> list[dict]:
+def _load_gold(limit: Optional[int] = None, gold_path: Path = GOLD_PATH) -> list[dict]:
     items = []
-    with open(GOLD_PATH) as f:
+    with open(gold_path) as f:
         for line in f:
             line = line.strip()
             if line:
                 items.append(json.loads(line))
     return items[:limit] if limit else items
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return left.resolve() == right.resolve()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 # ── LLM judge helpers ──────────────────────────────────────────────────────────
@@ -646,7 +659,14 @@ def _git_dirty() -> bool:
         return True
 
 
-def append_history(agg: dict, n_items: int, limit: Optional[int], git_dirty: bool) -> None:
+def append_history(
+    agg: dict,
+    n_items: int,
+    limit: Optional[int],
+    git_dirty: bool,
+    gold_path: Path = GOLD_PATH,
+    gold_sha256: Optional[str] = None,
+) -> None:
     """Append one aggregate record per eval run — the before/after comparison
     data source (Decisions §3: archive every run, keep the file in git)."""
     record = {
@@ -656,6 +676,8 @@ def append_history(agg: dict, n_items: int, limit: Optional[int], git_dirty: boo
         "gold_set_items": n_items,
         "limit": limit,
         "eval_key_used": bool(_eval_key),
+        "gold_set_path": str(gold_path),
+        "gold_set_sha256": gold_sha256 or _file_sha256(gold_path),
         "agent_backend": _AGENT_BACKEND,
         **agg,
     }
@@ -680,11 +702,18 @@ def main() -> None:
     parser.add_argument("--run-id", default=None,
                         help="Resume ID; defaults to <date>_<commit>. Items already "
                              "in partial_<run_id>.jsonl are skipped on restart.")
+    parser.add_argument("--gold-path", type=Path, default=GOLD_PATH,
+                        help="JSONL gold/holdout set path; defaults to eval/gold_set.jsonl")
     parser.add_argument("--allow-dirty", action="store_true",
                         help="Run even with uncommitted changes in the working tree. "
                              "The archived history.jsonl record is forced to include "
                              "\"git_dirty\": true so the mismatch is never silent.")
     args = parser.parse_args()
+    if not _same_path(args.gold_path, GOLD_PATH) and _same_path(Path(args.out), DEFAULT_OUT):
+        sys.exit(
+            "[run_eval] --gold-path uses a non-default eval set, so --out must "
+            "be explicit to avoid overwriting or mislabeling baseline results."
+        )
 
     dirty = _git_dirty()
     if dirty and not args.allow_dirty:
@@ -702,7 +731,8 @@ def main() -> None:
 
 
 def _run(args: argparse.Namespace, git_dirty: bool) -> None:
-    items = _load_gold(args.limit)
+    items = _load_gold(args.limit, gold_path=args.gold_path)
+    gold_sha256 = _file_sha256(args.gold_path)
     print(f"Evaluating {len(items)} items …", flush=True)
 
     # Checkpoint file: one line per completed item, written immediately, so a
@@ -754,8 +784,14 @@ def _run(args: argparse.Namespace, git_dirty: bool) -> None:
         for r in results:
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
     print(f"\nDetailed results → {out_path}")
-
-    append_history(agg, n_items=len(items), limit=args.limit, git_dirty=git_dirty)
+    append_history(
+        agg,
+        n_items=len(items),
+        limit=args.limit,
+        git_dirty=git_dirty,
+        gold_path=args.gold_path,
+        gold_sha256=gold_sha256,
+    )
     print()
 
 

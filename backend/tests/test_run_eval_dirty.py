@@ -66,3 +66,66 @@ def test_append_history_omits_git_dirty_field_when_clean(tmp_path):
         run_eval.append_history({"total": 1, "errors": 0}, n_items=1, limit=None, git_dirty=False)
         record = json.loads((tmp_path / "history.jsonl").read_text().strip())
         assert "git_dirty" not in record
+
+
+def test_load_gold_reads_custom_path(tmp_path):
+    custom_gold = tmp_path / "holdout.jsonl"
+    custom_gold.write_text(
+        "\n".join([
+            json.dumps({"id": "h001", "query": "q1"}),
+            json.dumps({"id": "h002", "query": "q2"}),
+        ]) + "\n"
+    )
+
+    assert run_eval._load_gold(gold_path=custom_gold) == [
+        {"id": "h001", "query": "q1"},
+        {"id": "h002", "query": "q2"},
+    ]
+
+
+def test_load_gold_applies_limit_to_custom_path(tmp_path):
+    custom_gold = tmp_path / "holdout.jsonl"
+    custom_gold.write_text(
+        "\n".join([
+            json.dumps({"id": "h001", "query": "q1"}),
+            json.dumps({"id": "h002", "query": "q2"}),
+        ]) + "\n"
+    )
+
+    assert run_eval._load_gold(limit=1, gold_path=custom_gold) == [
+        {"id": "h001", "query": "q1"},
+    ]
+
+
+def test_main_refuses_custom_gold_path_with_default_out(tmp_path):
+    custom_gold = tmp_path / "holdout.jsonl"
+    custom_gold.write_text(json.dumps({"id": "h001"}) + "\n")
+
+    with patch("eval.run_eval._git_dirty", return_value=False), \
+         patch("eval.run_eval._acquire_lock"), \
+         patch("eval.run_eval._run") as mock_run, \
+         patch("sys.argv", ["run_eval.py", "--gold-path", str(custom_gold)]):
+        with pytest.raises(SystemExit):
+            run_eval.main()
+
+    mock_run.assert_not_called()
+
+
+def test_append_history_records_gold_identity(tmp_path):
+    custom_gold = tmp_path / "holdout.jsonl"
+    custom_gold.write_text(json.dumps({"id": "h001"}) + "\n")
+
+    with patch.object(run_eval, "HISTORY_PATH", tmp_path / "history.jsonl"), \
+         patch("eval.run_eval._git_commit", return_value="abc1234"):
+        run_eval.append_history(
+            {"total": 1, "errors": 0},
+            n_items=1,
+            limit=None,
+            git_dirty=False,
+            gold_path=custom_gold,
+            gold_sha256="hash123",
+        )
+
+    record = json.loads((tmp_path / "history.jsonl").read_text().strip())
+    assert record["gold_set_path"] == str(custom_gold)
+    assert record["gold_set_sha256"] == "hash123"
