@@ -88,7 +88,7 @@ from llm.trace import context as _trace_context
 from agent.loop import run_agent
 from agent.router import route as _router_route
 from agent.tools.retrieve import RetrieveTool
-from llm.client import complete
+from llm.client import collect_stats, complete
 
 _run_graph = None
 if _AGENT_BACKEND == "langgraph":
@@ -183,6 +183,15 @@ class ItemResult:
     # True/False = substantive content was given and did/didn't disclose
     # that it came from web search rather than the KB.
     source_disclosed: Optional[bool] = None
+
+    router_latency_s: float = 0.0
+    diagnostic_retrieval_latency_s: float = 0.0
+    pipeline_latency_s: float = 0.0
+    posthoc_groundedness_latency_s: float = 0.0
+    judge_latency_s: float = 0.0
+    llm_call_count: int = 0
+    llm_retry_count: int = 0
+    llm_retry_sleep_s: float = 0.0
 
     latency_s: float = 0.0
     error: Optional[str] = None
@@ -363,7 +372,7 @@ def eval_item(item: dict) -> ItemResult:
 
 
 def _eval_item(item: dict) -> ItemResult:
-    t0 = time.time()
+    t0 = time.perf_counter()
     is_boundary = (
         item.get("category") == "boundary"
         or "边界" in item.get("notes", "")
@@ -380,102 +389,127 @@ def _eval_item(item: dict) -> ItemResult:
         is_boundary=is_boundary,
     )
 
-    try:
-        actual_route = _router_route(item["query"])
-        result.actual_route = actual_route
-        result.route_correct = actual_route == item["expected_route"]
+    with collect_stats() as llm_stats:
+        try:
+            stage_t = time.perf_counter()
+            try:
+                actual_route = _router_route(item["query"])
+            finally:
+                result.router_latency_s = round(time.perf_counter() - stage_t, 2)
+            result.actual_route = actual_route
+            result.route_correct = actual_route == item["expected_route"]
 
-        keywords = item.get("expected_answer_contains", [])
-        min_hits = item.get("min_hits", 1)
+            keywords = item.get("expected_answer_contains", [])
+            min_hits = item.get("min_hits", 1)
 
-        # Layer 2 — retrieval recall@k (independent of pipeline runner)
-        retrieved_chunks: list[str] = []
-        do_retrieval = (
-            item["expected_route"] in ("rag", "agent")
-            and item["category"] != "unanswerable"
-        )
-        if do_retrieval:
-            r = RetrieveTool(kb_id=item["kb_id"]).run(query=item["query"])
-            retrieved_chunks = r.get("chunks", [])
-            result.relevance_ok = r.get("relevance_ok", False)
-            chunks_norm = _normalize(" ".join(retrieved_chunks))
-            kw_hits = sum(1 for kw in keywords if _keyword_hit(kw, chunks_norm))
-            result.retrieval_keyword_hits = kw_hits
-            result.retrieval_hit = kw_hits >= 1
-
-        # Layer 3a — generate answer via actual route
-        answer = ""
-        answer_scope = "unassigned"
-        delivery_kind: Optional[str] = None
-        grounded: Optional[bool] = None
-        verification_status: Optional[str] = None
-
-        if actual_route == "direct":
-            answer = _run_direct(item["query"])
-            answer_scope = "eval_simplified"
-        elif actual_route == "rag":
-            answer = _run_rag(item["query"], retrieved_chunks)
-            answer_scope = "eval_simplified"
-        else:  # agent
-            answer, agent_chunks, grounded, verification_status = _run_agent_path(
-                item["query"], item["kb_id"]
+            # Layer 2 — retrieval recall@k (independent of pipeline runner)
+            retrieved_chunks: list[str] = []
+            do_retrieval = (
+                item["expected_route"] in ("rag", "agent")
+                and item["category"] != "unanswerable"
             )
-            if agent_chunks:
-                retrieved_chunks = agent_chunks
-            if _AGENT_BACKEND == "langgraph" and is_verified_delivery_enabled():
-                decision = select_delivery(answer, verification_status)
-                answer = decision.payload
-                answer_scope = "production_delivered"
-                delivery_kind = decision.kind
-            else:
-                answer_scope = "agent_internal"
+            if do_retrieval:
+                stage_t = time.perf_counter()
+                try:
+                    r = RetrieveTool(kb_id=item["kb_id"]).run(query=item["query"])
+                finally:
+                    result.diagnostic_retrieval_latency_s = round(time.perf_counter() - stage_t, 2)
+                retrieved_chunks = r.get("chunks", [])
+                result.relevance_ok = r.get("relevance_ok", False)
+                chunks_norm = _normalize(" ".join(retrieved_chunks))
+                kw_hits = sum(1 for kw in keywords if _keyword_hit(kw, chunks_norm))
+                result.retrieval_keyword_hits = kw_hits
+                result.retrieval_hit = kw_hits >= 1
 
-        result.answer = answer
-        result.answer_scope = answer_scope
-        result.delivery_kind = delivery_kind
-        result.verification_status = verification_status
+            # Layer 3a — generate answer via actual route
+            answer = ""
+            answer_scope = "unassigned"
+            delivery_kind: Optional[str] = None
+            grounded: Optional[bool] = None
+            verification_status: Optional[str] = None
 
-        if not answer.strip():
-            # No exception was raised, but the model produced no visible text
-            # (observed on gemini-3.5-flash: the max_turns wrap-up call can
-            # return content with empty/absent parts if the thinking budget
-            # is exhausted before the visible answer is emitted). Silently
-            # scoring this as contains_pass=False / grounded=None would
-            # under-report it as a normal miss rather than a failed call, and
-            # it would never get retried on resume. Treat it as an error so
-            # it's excluded from scoring and picked up again on resume.
-            raise RuntimeError(
-                "empty_answer: model returned no text (no exception raised)"
-            )
+            stage_t = time.perf_counter()
+            try:
+                if actual_route == "direct":
+                    answer = _run_direct(item["query"])
+                    answer_scope = "eval_simplified"
+                elif actual_route == "rag":
+                    answer = _run_rag(item["query"], retrieved_chunks)
+                    answer_scope = "eval_simplified"
+                else:  # agent
+                    answer, agent_chunks, grounded, verification_status = _run_agent_path(
+                        item["query"], item["kb_id"]
+                    )
+                    if agent_chunks:
+                        retrieved_chunks = agent_chunks
+                    if _AGENT_BACKEND == "langgraph" and is_verified_delivery_enabled():
+                        decision = select_delivery(answer, verification_status)
+                        answer = decision.payload
+                        answer_scope = "production_delivered"
+                        delivery_kind = decision.kind
+                    else:
+                        answer_scope = "agent_internal"
+            finally:
+                result.pipeline_latency_s = round(time.perf_counter() - stage_t, 2)
 
-        # Layer 3b — contains check
-        answer_norm = _normalize(answer)
-        hits = sum(1 for kw in keywords if _keyword_hit(kw, answer_norm))
-        result.contains_hits = hits
-        result.contains_pass = hits >= min_hits
+            result.answer = answer
+            result.answer_scope = answer_scope
+            result.delivery_kind = delivery_kind
+            result.verification_status = verification_status
 
-        # Layer 3b.2 — unanswerable-category source disclosure (only when the
-        # model gave substantive content instead of an honest refusal).
-        if item["category"] == "unanswerable" and not result.contains_pass and answer:
-            result.source_disclosed = _has_source_disclosure(answer)
+            if not answer.strip():
+                # No exception was raised, but the model produced no visible text
+                # (observed on gemini-3.5-flash: the max_turns wrap-up call can
+                # return content with empty/absent parts if the thinking budget
+                # is exhausted before the visible answer is emitted). Silently
+                # scoring this as contains_pass=False / grounded=None would
+                # under-report it as a normal miss rather than a failed call, and
+                # it would never get retried on resume. Treat it as an error so
+                # it's excluded from scoring and picked up again on resume.
+                raise RuntimeError(
+                    "empty_answer: model returned no text (no exception raised)"
+                )
 
-        # Layer 3c — groundedness
-        if item.get("grounding_required", False) and answer:
-            if grounded is None:
-                evidence = [{"text": c, "source": "retrieved"} for c in retrieved_chunks]
-                g = _groundedness_check(answer, evidence)
-                grounded = g.get("supported", True)
-            result.grounded = grounded
+            # Layer 3b — contains check
+            answer_norm = _normalize(answer)
+            hits = sum(1 for kw in keywords if _keyword_hit(kw, answer_norm))
+            result.contains_hits = hits
+            result.contains_pass = hits >= min_hits
 
-        # Layer 3d — RAGAS-inspired (agent-expected only, per spec)
-        if item["expected_route"] == "agent" and answer:
-            result.faithfulness = _faithfulness(answer, retrieved_chunks)
-            result.answer_relevancy = _answer_relevancy(item["query"], answer)
+            # Layer 3b.2 — unanswerable-category source disclosure (only when the
+            # model gave substantive content instead of an honest refusal).
+            if item["category"] == "unanswerable" and not result.contains_pass and answer:
+                result.source_disclosed = _has_source_disclosure(answer)
 
-    except Exception as exc:
-        result.error = str(exc)
+            # Layer 3c — groundedness
+            if item.get("grounding_required", False) and answer:
+                stage_t = time.perf_counter()
+                try:
+                    if grounded is None:
+                        evidence = [{"text": c, "source": "retrieved"} for c in retrieved_chunks]
+                        g = _groundedness_check(answer, evidence)
+                        grounded = g.get("supported", True)
+                    result.grounded = grounded
+                finally:
+                    result.posthoc_groundedness_latency_s = round(time.perf_counter() - stage_t, 2)
 
-    result.latency_s = round(time.time() - t0, 2)
+            # Layer 3d — RAGAS-inspired (agent-expected only, per spec)
+            if item["expected_route"] == "agent" and answer:
+                stage_t = time.perf_counter()
+                try:
+                    result.faithfulness = _faithfulness(answer, retrieved_chunks)
+                    result.answer_relevancy = _answer_relevancy(item["query"], answer)
+                finally:
+                    result.judge_latency_s = round(time.perf_counter() - stage_t, 2)
+
+        except Exception as exc:
+            result.error = str(exc)
+        finally:
+            result.llm_call_count = int(llm_stats["llm_call_count"])
+            result.llm_retry_count = int(llm_stats["llm_retry_count"])
+            result.llm_retry_sleep_s = round(llm_stats["llm_retry_sleep_s"], 2)
+
+    result.latency_s = round(time.perf_counter() - t0, 2)
     return result
 
 

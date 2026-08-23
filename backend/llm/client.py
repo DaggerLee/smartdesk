@@ -7,9 +7,11 @@ gemini_client.py is kept as-is for the existing v1 routes.
 
 import json
 import logging
+import contextvars
 import os
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
@@ -19,6 +21,34 @@ import config
 from llm.trace import span as _trace_span, write as _trace_write
 
 logger = logging.getLogger(__name__)
+_RETRY_INITIAL_DELAY_S = 5
+_RETRY_MAX_DELAY_S = 30
+
+_stats: contextvars.ContextVar[dict[str, float] | None] = contextvars.ContextVar(
+    "llm_stats",
+    default=None,
+)
+
+
+@contextmanager
+def collect_stats():
+    stats: dict[str, float] = {
+        "llm_call_count": 0,
+        "llm_retry_count": 0,
+        "llm_retry_sleep_s": 0.0,
+    }
+    token = _stats.set(stats)
+    try:
+        yield stats
+    finally:
+        _stats.reset(token)
+
+
+def _record_stat(key: str, value: float) -> None:
+    stats = _stats.get()
+    if stats is not None:
+        stats[key] += value
+
 
 
 # ── Response types ─────────────────────────────────────────────────────────────
@@ -253,8 +283,23 @@ def complete(
         "has_tools": bool(tools),
         "has_system": bool(system),
     }
+    _record_stat("llm_call_count", 1)
     with _trace_span(_entry) as _out:
-        _delay = 30
+        _delay = _RETRY_INITIAL_DELAY_S
+        _retry_count = 0
+        _retry_sleep_s = 0.0
+        _out["retry_count"] = _retry_count
+        _out["retry_sleep_s"] = _retry_sleep_s
+
+        def _record_retry(delay: int) -> None:
+            nonlocal _retry_count, _retry_sleep_s
+            _retry_count += 1
+            _retry_sleep_s += delay
+            _out["retry_count"] = _retry_count
+            _out["retry_sleep_s"] = round(_retry_sleep_s, 2)
+            _record_stat("llm_retry_count", 1)
+            _record_stat("llm_retry_sleep_s", float(delay))
+
         for _attempt in range(6):
             _throttle()
             try:
@@ -266,14 +311,16 @@ def complete(
                 # server. _post() has already redacted the key in exc's message.
                 if _attempt < 5:
                     logger.warning(f"[llm] {type(exc).__name__} transient, retrying in {_delay}s (attempt {_attempt+1}/5)")
+                    _record_retry(_delay)
                     time.sleep(_delay)
-                    _delay = min(_delay * 2, 120)
+                    _delay = min(_delay * 2, _RETRY_MAX_DELAY_S)
                     continue
                 raise
             if resp.status_code in (429, 500, 503, 504) and _attempt < 5:
                 logger.warning(f"[llm] {resp.status_code} transient, retrying in {_delay}s (attempt {_attempt+1}/5)")
+                _record_retry(_delay)
                 time.sleep(_delay)
-                _delay = min(_delay * 2, 120)
+                _delay = min(_delay * 2, _RETRY_MAX_DELAY_S)
                 continue
             _raise_for_status(resp)
             break

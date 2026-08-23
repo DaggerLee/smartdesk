@@ -156,6 +156,49 @@ def test_simplified_non_agent_eval_is_labeled(route):
     assert result.answer_scope == "eval_simplified"
 
 
+
+def test_eval_item_records_latency_breakdown_and_llm_stats():
+    item = {
+        "id": "q1",
+        "query": "q",
+        "category": "factual",
+        "difficulty": "medium",
+        "expected_route": "rag",
+        "kb_id": 1,
+        "expected_answer_contains": ["answer"],
+        "min_hits": 1,
+        "grounding_required": False,
+    }
+
+    class _Stats:
+        def __enter__(self):
+            return {
+                "llm_call_count": 2,
+                "llm_retry_count": 1,
+                "llm_retry_sleep_s": 5.0,
+            }
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    with patch("eval.run_eval.collect_stats", return_value=_Stats()), \
+         patch("eval.run_eval._router_route", return_value="rag"), \
+         patch("eval.run_eval.RetrieveTool") as retrieve_cls, \
+         patch("eval.run_eval._run_rag", return_value="answer"):
+        retrieve_cls.return_value.run.return_value = {
+            "chunks": ["answer chunk"],
+            "relevance_ok": True,
+        }
+        result = run_eval.eval_item(item)
+
+    assert result.router_latency_s >= 0
+    assert result.diagnostic_retrieval_latency_s >= 0
+    assert result.pipeline_latency_s >= 0
+    assert result.llm_call_count == 2
+    assert result.llm_retry_count == 1
+    assert result.llm_retry_sleep_s == 5.0
+
+
 def test_aggregate_records_answer_scope_distribution():
     delivered = _item("a1", "verified")
     delivered.answer_scope = "production_delivered"

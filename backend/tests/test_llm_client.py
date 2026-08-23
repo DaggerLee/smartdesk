@@ -123,7 +123,7 @@ def test_complete_retries_on_timeout_then_succeeds(monkeypatch):
 
     assert resp.text == "hi"
     assert calls["n"] == 3
-    assert len(sleeps) == 2  # retried twice before the successful 3rd attempt
+    assert sleeps == [5, 10]  # retried twice before the successful 3rd attempt
 
 
 def test_complete_gives_up_after_retry_budget_on_connection_error(monkeypatch):
@@ -137,7 +137,69 @@ def test_complete_gives_up_after_retry_budget_on_connection_error(monkeypatch):
         with pytest.raises(requests.exceptions.ConnectionError):
             client.complete(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
 
-    assert len(sleeps) == 5  # attempts 0-4 retry (5 sleeps), attempt 5 raises
+    assert sleeps == [5, 10, 20, 30, 30]  # attempts 0-4 retry, attempt 5 raises
+
+
+def test_complete_exhausted_connection_error_trace_records_retries(monkeypatch):
+    monkeypatch.setattr(client, "_model_validated", True)
+    monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
+    monkeypatch.setattr(client, "_throttle", lambda: None)
+    monkeypatch.setattr(client.time, "sleep", lambda _s: None)
+    traces: list[dict] = []
+    monkeypatch.setattr(client, "_trace_span", lambda _entry: _capture_span(traces))
+
+    with patch("llm.client.requests.post", side_effect=requests.exceptions.ConnectionError("boom")):
+        with pytest.raises(requests.exceptions.ConnectionError):
+            client.complete(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
+
+    assert traces[0]["retry_count"] == 5
+    assert traces[0]["retry_sleep_s"] == 95.0
+
+
+def test_complete_http_transient_retries_use_same_budget(monkeypatch):
+    monkeypatch.setattr(client, "_model_validated", True)
+    monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
+    monkeypatch.setattr(client, "_throttle", lambda: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr(client.time, "sleep", lambda s: sleeps.append(s))
+
+    retry = _fake_response(503, "https://example.com")
+    ok = _fake_response(200, "https://example.com")
+    ok._content = b'{"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}'
+
+    with patch("llm.client.requests.post", side_effect=[retry, ok]):
+        resp = client.complete(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
+
+    assert resp.text == "hi"
+    assert sleeps == [5]
+
+
+
+def test_complete_records_retry_stats(monkeypatch):
+    monkeypatch.setattr(client, "_model_validated", True)
+    monkeypatch.setattr(client.config, "GEMINI_API_KEY", "SECRET123")
+    monkeypatch.setattr(client, "_throttle", lambda: None)
+    monkeypatch.setattr(client.time, "sleep", lambda _s: None)
+
+    ok = _fake_response(200, "https://example.com")
+    ok._content = b'{"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}'
+    calls = {"n": 0}
+
+    def _flaky_post(url, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.exceptions.Timeout("Read timed out (timeout=30)")
+        return ok
+
+    with client.collect_stats() as stats:
+        with patch("llm.client.requests.post", side_effect=_flaky_post):
+            client.complete(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
+
+    assert stats == {
+        "llm_call_count": 1,
+        "llm_retry_count": 1,
+        "llm_retry_sleep_s": 5.0,
+    }
 
 
 def test_complete_candidate_less_200_raises_safe_protocol_error(monkeypatch):
@@ -170,7 +232,11 @@ def test_complete_candidate_less_200_raises_safe_protocol_error(monkeypatch):
         "parts_present": False,
         "parts_count": 0,
     }
-    assert traces == [{"protocol_error": error.value.diagnostics}]
+    assert traces == [{
+        "retry_count": 0,
+        "retry_sleep_s": 0.0,
+        "protocol_error": error.value.diagnostics,
+    }]
 
 
 def test_complete_content_less_candidate_raises_safe_protocol_error(monkeypatch):
@@ -203,7 +269,11 @@ def test_complete_content_less_candidate_raises_safe_protocol_error(monkeypatch)
         "parts_present": False,
         "parts_count": 0,
     }
-    assert traces == [{"protocol_error": error.value.diagnostics}]
+    assert traces == [{
+        "retry_count": 0,
+        "retry_sleep_s": 0.0,
+        "protocol_error": error.value.diagnostics,
+    }]
 
 
 def test_protocol_diagnostics_only_include_shape_metadata(monkeypatch):
