@@ -41,7 +41,6 @@ class RetrieveTool:
             relevance_ok = best_distance < RELEVANCE_THRESHOLD or strong_lexical_match
             _out["chunks_count"] = len(results)
             _out["best_distance"] = best_distance
-            _out["top_distance"] = best_distance
             _out["strong_lexical_match"] = strong_lexical_match
             _out["relevance_ok"] = relevance_ok
         return {
