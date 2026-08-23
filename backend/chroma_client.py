@@ -69,14 +69,44 @@ def chunk_text(text: str, chunk_size: int = config.CHUNK_SIZE, overlap: int = co
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9+#_.-]*|[\u4e00-\u9fff]+", re.IGNORECASE)
-_RERANK_MIN_CANDIDATES = 20
+_RERANK_MIN_CANDIDATES = 50
 _RERANK_MULTIPLIER = 4
-_CJK_QUESTION_TERMS = ("是什么", "为什么", "怎么", "如何", "什么", "哪几", "哪三")
-_CJK_FILLER_CHARS = "的了在里和与及是"
+_CJK_QUESTION_TERMS = (
+    "有没有",
+    "有多少种",
+    "有几种",
+    "是什么",
+    "为什么",
+    "怎么",
+    "如何",
+    "什么",
+    "多少",
+    "几种",
+    "哪些",
+    "哪几",
+    "哪三",
+)
+_CJK_GENERIC_MARKERS = ("什么", "多少", "几", "哪", "谁", "吗", "是否", "有没有")
+_CJK_FILLER_CHARS = "的了在里和与及是有"
 
 
 def _normalize_for_match(text: str) -> str:
     return unicodedata.normalize("NFKC", text).casefold()
+
+
+def _cjk_terms(token: str) -> set[str]:
+    compact = token
+    for question_term in _CJK_QUESTION_TERMS:
+        compact = compact.replace(question_term, "")
+    compact = "".join(ch for ch in compact if ch not in _CJK_FILLER_CHARS)
+    if len(compact) < 2 or any(marker in compact for marker in _CJK_GENERIC_MARKERS):
+        return set()
+
+    terms = {compact}
+    if len(compact) > 4:
+        terms.update(compact[i : i + 2] for i in range(0, len(compact) - 1, 2))
+        terms.update(compact[i : i + 3] for i in range(0, len(compact) - 2, 3))
+    return terms
 
 
 def _query_terms(query: str) -> set[str]:
@@ -84,14 +114,7 @@ def _query_terms(query: str) -> set[str]:
     terms: set[str] = set()
     for token in _TOKEN_RE.findall(norm):
         if _CJK_RE.fullmatch(token):
-            compact = token
-            for question_term in _CJK_QUESTION_TERMS:
-                compact = compact.replace(question_term, "")
-            compact = "".join(ch for ch in compact if ch not in _CJK_FILLER_CHARS)
-            if len(compact) >= 2:
-                terms.add(compact)
-                terms.update(compact[i : i + 2] for i in range(len(compact) - 1))
-                terms.update(compact[i : i + 3] for i in range(len(compact) - 2))
+            terms.update(_cjk_terms(token))
         elif len(token) >= 2:
             terms.add(token)
     return terms
@@ -106,6 +129,17 @@ def _term_in_document(term: str, document: str) -> bool:
 def _lexical_score(terms: set[str], document: str) -> int:
     doc = _normalize_for_match(document)
     return sum(1 for term in terms if _term_in_document(term, doc))
+
+
+def _strong_lexical_match(terms: set[str], document: str) -> bool:
+    doc = _normalize_for_match(document)
+    for term in terms:
+        if _CJK_RE.search(term):
+            if len(term) >= 4 and term in doc:
+                return True
+        elif len(term) >= 4 and _term_in_document(term, doc):
+            return True
+    return False
 
 
 def _candidate_count(requested: int, collection_count: int) -> int:
@@ -125,7 +159,8 @@ def query_documents(kb_id: int, query: str, n_results: int = config.TOP_K) -> Li
     """Retrieve the most relevant document chunks for a query.
 
     Returns a list of dicts with keys: text, filename, chunk_index, distance,
-    lexical_score. distance is a cosine distance in [0, 2]; lower means more relevant.
+    lexical_score, strong_lexical_match. distance is a cosine distance in [0, 2];
+    lower means more relevant.
     """
     collection = _get_or_create(kb_id)
     count = collection.count()
@@ -147,6 +182,7 @@ def query_documents(kb_id: int, query: str, n_results: int = config.TOP_K) -> Li
     rows = []
     for i, doc in enumerate(docs):
         lexical_score = _lexical_score(query_terms, doc)
+        strong_lexical_match = _strong_lexical_match(query_terms, doc)
         rows.append(
             {
                 "text": doc,
@@ -154,9 +190,16 @@ def query_documents(kb_id: int, query: str, n_results: int = config.TOP_K) -> Li
                 "chunk_index": (metas[i] or {}).get("chunk_index", i),
                 "distance": dists[i] if i < len(dists) else 2.0,
                 "lexical_score": lexical_score,
+                "strong_lexical_match": strong_lexical_match,
             }
         )
-    rows.sort(key=lambda row: (-row["lexical_score"], row["distance"]))
+    rows.sort(
+        key=lambda row: (
+            not row["strong_lexical_match"],
+            -row["lexical_score"],
+            row["distance"],
+        )
+    )
     return rows[:n_results]
 
 

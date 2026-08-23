@@ -34,7 +34,7 @@ def test_retrieve_relevance_accepts_strong_lexical_match(monkeypatch):
             "filename": "exact.html",
             "chunk_index": 2,
             "distance": 0.90,
-            "lexical_score": 3,
+            "strong_lexical_match": True,
         }
     ]
     monkeypatch.setattr("agent.tools.retrieve.chroma_client.query_documents", lambda *args, **kwargs: rows)
@@ -51,7 +51,8 @@ def test_retrieve_relevance_rejects_weak_lexical_only_match(monkeypatch):
             "filename": "generic.html",
             "chunk_index": 1,
             "distance": 0.90,
-            "lexical_score": 2,
+            "lexical_score": 5,
+            "strong_lexical_match": False,
         }
     ]
     monkeypatch.setattr("agent.tools.retrieve.chroma_client.query_documents", lambda *args, **kwargs: rows)
