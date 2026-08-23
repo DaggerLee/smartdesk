@@ -1,0 +1,79 @@
+[
+  {
+    "artifact": "eval/results/holdout_rerank_ef70ae4_20260823.jsonl",
+    "rows": 16,
+    "errors": [],
+    "route_correct": {
+      "pass": 14,
+      "total": 16
+    },
+    "retrieval_hit": {
+      "pass": 12,
+      "total": 12
+    },
+    "relevance_ok": {
+      "pass": 12,
+      "total": 12
+    },
+    "contains_pass": {
+      "pass": 15,
+      "total": 16
+    },
+    "grounded": {
+      "pass": 11,
+      "total": 12
+    },
+    "contains_fail": [
+      "h012"
+    ],
+    "grounded_fail": [
+      "h012"
+    ],
+    "route_fail": [
+      "h013",
+      "h014"
+    ],
+    "faithfulness_mean": 0.95,
+    "faithfulness_n": 2,
+    "answer_relevancy_mean": 1.0,
+    "answer_relevancy_n": 2,
+    "avg_latency_s": 42.58
+  },
+  {
+    "artifact": "eval/results/holdout_successor3_ef70ae4_20260823.jsonl",
+    "rows": 18,
+    "errors": [],
+    "route_correct": {
+      "pass": 17,
+      "total": 18
+    },
+    "retrieval_hit": {
+      "pass": 15,
+      "total": 15
+    },
+    "relevance_ok": {
+      "pass": 15,
+      "total": 15
+    },
+    "contains_pass": {
+      "pass": 17,
+      "total": 18
+    },
+    "grounded": {
+      "pass": 15,
+      "total": 15
+    },
+    "contains_fail": [
+      "x014"
+    ],
+    "grounded_fail": [],
+    "route_fail": [
+      "x007"
+    ],
+    "faithfulness_mean": 1.0,
+    "faithfulness_n": 1,
+    "answer_relevancy_mean": 1.0,
+    "answer_relevancy_n": 1,
+    "avg_latency_s": 25.28
+  }
+]

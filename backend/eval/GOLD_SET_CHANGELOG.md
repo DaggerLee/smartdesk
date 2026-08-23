@@ -8,9 +8,9 @@ harness or agent code are fixed in code, not here.
 ## 2026-08-23 — successor3 holdout set
 
 - Added `holdout_set_2026_08_successor3.jsonl` as the next clean 18-item
-  successor after finalizing the router prompt examples. This set replaces
-  successor2 for future generalization evidence; it must be run once, then
-  marked burned.
+  successor after finalizing the router prompt examples. This set replaced
+  successor2 for generalization evidence; after the first formal run below it
+  is burned and must not be tuned in place.
 - Holdout SHA-256:
   `ec5871ecec3ae1926f852861557d6cb907557cc4b7060cee3e2322405f10fbf0`.
 - The set stays on the current `kb_1` corpus owner: the four files loaded by
@@ -25,6 +25,16 @@ harness or agent code are fixed in code, not here.
   corpus-negative absence.
 - The absence row was checked by literal search for `WebRTC`/`ICE candidate`/
   `TURN server` across the four indexed note files.
+- First formal successor3 run:
+  `results/holdout_successor3_ef70ae4_20260823.jsonl`. Metrics: errors `0`,
+  router `17/18`, positive-query retrieval `15/15`, positive-query relevance
+  `15/15`, contains `17/18`, grounded `15/15`, faithfulness `1.0` (`n=1`),
+  answer relevancy `1.0` (`n=1`), average latency `25.28s`. Route failed on
+  `x007`; contains failed on `x014`. The run is now burned. Post-fix burned
+  regression artifact from the same reviewed HEAD:
+  `results/holdout_rerank_ef70ae4_20260823.jsonl`; summary:
+  `results/holdout_ef70ae4_20260823_summary.json`.
+
 
 ## 2026-08-23 — successor2 retired development set
 
