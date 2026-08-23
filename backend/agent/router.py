@@ -52,17 +52,17 @@ User: What is the Transformer attention mechanism?
 Answer: rag
 
 
-User: 某份内部笔记里，短有效期凭据和续期凭据分别负责什么？
+User: 某份设备手册里，保修范围和免责条款分别覆盖什么？
 Answer: rag
 (Two tightly related facts from one named note/source; not a comparison,
 planning task, or external lookup.)
 
-User: 某个远程协议的新旧传输方式，在连接状态处理上有什么核心差异？
+User: 同一个 SDK 文档里，本地缓存和远程同步的关键差异是什么？
 Answer: rag
 (A technical difference inside one source-bounded topic; one retrieval pass
 should answer it.)
 
-User: 这组项目笔记里有没有讲消息队列分区再均衡策略？
+User: 这组项目笔记里有没有讲电子表格宏安全策略？
 Answer: rag
 (A corpus-bounded absence check across the knowledge base; retrieval should
 confirm whether the notes contain it.)

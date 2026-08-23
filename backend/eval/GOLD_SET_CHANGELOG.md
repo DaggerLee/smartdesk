@@ -5,12 +5,37 @@ the label was wrong, not the system. Route/scoring bugs found in the
 harness or agent code are fixed in code, not here.
 
 
-## 2026-08-23 — successor2 holdout set
+## 2026-08-23 — successor3 holdout set
+
+- Added `holdout_set_2026_08_successor3.jsonl` as the next clean 18-item
+  successor after finalizing the router prompt examples. This set replaces
+  successor2 for future generalization evidence; it must be run once, then
+  marked burned.
+- Holdout SHA-256:
+  `ec5871ecec3ae1926f852861557d6cb907557cc4b7060cee3e2322405f10fbf0`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`.
+- Coverage uses new IDs `x001`-`x018` and new phrasings: direct controls,
+  agentic benefits/decomposition/reflection/tool-use/eval/optimization facts,
+  MCP standardization/schema/parallel-tool protocol details, reproducibility
+  and prompt-discipline facts, cross-source execution-boundary synthesis, and
+  corpus-negative absence.
+- The absence row was checked by literal search for `WebRTC`/`ICE candidate`/
+  `TURN server` across the four indexed note files.
+
+## 2026-08-23 — successor2 retired development set
 
 - Added `holdout_set_2026_08_successor2.jsonl` as the second successor
-  18-item holdout after the bounded diagnostic-chain prompt fix. The first
-  successor set is burned by `results/holdout_successor_d22c807_20260823.jsonl`
-  and must not be tuned in place.
+  18-item holdout after the bounded diagnostic-chain prompt fix. It was never
+  formally evaluated.
+- Lifecycle correction: reviewer found the later router example in `617fe66`
+  semantically matched successor2 `t011` (short-lived/renewal credentials vs
+  access/refresh tokens). Exact string leakage was absent, but the semantic
+  template contamination is enough to retire successor2 as a clean holdout.
+  Treat it as a development set only; do not use it as generalization evidence.
 - Holdout SHA-256:
   `ff53c54b2b4fb2352ee8b71f1eebf0ff6270ab2d9a61595b9e2599af5564befb`.
 - The set stays on the current `kb_1` corpus owner: the four files loaded by

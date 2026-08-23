@@ -63,15 +63,15 @@ def test_explicit_persist_intent_overrides_model_rag_label(router_mock):
 def test_source_bound_fact_invariant_lives_in_router_prompt(router_mock):
     router_mock.return_value = _resp("rag")
 
-    query = "某份内部笔记里，短有效期凭据和续期凭据分别负责什么？"
+    query = "某份设备手册里，保修范围和免责条款分别覆盖什么？"
     assert route(query) == "rag"
     system = router_mock.call_args.kwargs["system"]
     assert "Source-bound single-fact" in system
     assert "same-topic technical-difference" in system
     assert "corpus-bounded absence-check" in system
     assert query in system
-    assert "某个远程协议的新旧传输方式，在连接状态处理上有什么核心差异？" in system
-    assert "这组项目笔记里有没有讲消息队列分区再均衡策略？" in system
+    assert "同一个 SDK 文档里，本地缓存和远程同步的关键差异是什么？" in system
+    assert "这组项目笔记里有没有讲电子表格宏安全策略？" in system
 
 
 def test_router_prompt_does_not_embed_gold_or_holdout_queries():
