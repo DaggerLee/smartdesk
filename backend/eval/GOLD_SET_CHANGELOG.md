@@ -24,17 +24,18 @@ harness or agent code are fixed in code, not here.
 - The two absence rows were checked by literal search for the specific absent
   topics (`Kubernetes`/`HPA`, `Rust`/`borrow checker`) across the four indexed
   note files.
-- Strong-anchor rerank run after review fix:
-  `results/holdout_fresh2_7c14113_20260823.jsonl`; summary:
-  `results/holdout_fresh2_20260823_summary.json`. Burned regression artifact:
-  `results/holdout_rerank_bf105b0_20260823.jsonl`.
+- Strong-anchor rerank regression run after review fix:
+  `results/holdout_fresh2_f64888b_20260823.jsonl`; summary:
+  `results/holdout_fresh2_20260823_summary.json`. Burned 2026_08 regression
+  artifact: `results/holdout_rerank_00b15ea_20260823.jsonl`.
   Metrics: errors `0`, router `17/18`, positive-query retrieval `14/14`,
   positive-query relevance `13/14`, contains `15/18`, grounded `14/14`,
   faithfulness `1.0` (`n=3`), answer relevancy `0.667` (`n=3`),
-  average latency `24.25s`, retries `1`.
-  Remaining fresh2 misses: route `f014`; relevance gate `f011`;
-  contains `f006`, `f014`, `f015`. This run makes fresh2 the current
-  generalization evidence and burns it for future tuning decisions.
+  average latency `21.91s`, retries `0`.
+  Remaining fresh2 misses: route `f014`; relevance false negative `f011`;
+  contains `f006`, `f011`, `f014`. Fresh2 was already burned by earlier
+  committed runs, so this is reused-set regression evidence after the
+  strong-anchor retrieval fix, not new fresh generalization evidence.
   Relevance here measures positive-query sensitivity, not negative-query
   specificity; unanswerable rows do not run diagnostic retrieval in
   `run_eval.py`.
