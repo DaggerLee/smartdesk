@@ -4,6 +4,30 @@ Revisions to `gold_set.jsonl` after the item itself was already scored — i.e.
 the label was wrong, not the system. Route/scoring bugs found in the
 harness or agent code are fixed in code, not here.
 
+
+## 2026-08-23 — successor2 holdout set
+
+- Added `holdout_set_2026_08_successor2.jsonl` as the second successor
+  18-item holdout after the bounded diagnostic-chain prompt fix. The first
+  successor set is burned by `results/holdout_successor_d22c807_20260823.jsonl`
+  and must not be tuned in place.
+- Holdout SHA-256:
+  `ff53c54b2b4fb2352ee8b71f1eebf0ff6270ab2d9a61595b9e2599af5564befb`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`, which is present in
+  `docs-local/notes/` but not in the rebuilt `kb_1` index.
+- Coverage uses new IDs `t001`-`t018` and new phrasings: direct control,
+  autonomy-spectrum retrieval, external-feedback specifics, error-analysis
+  causal attribution, rubric scoring, MCP role/schema/control boundaries,
+  failure recovery, cross-source mini-eval/design-principle synthesis, parallel
+  dual-concept lookup, and corpus-negative absence.
+- The absence row was checked by literal search for
+  `Terraform`/`OpenTelemetry`/`distributed tracing` across the four indexed
+  note files.
+
 ## 2026-08-23 — successor holdout set
 
 - Added `holdout_set_2026_08_successor.jsonl` as the successor 18-item
