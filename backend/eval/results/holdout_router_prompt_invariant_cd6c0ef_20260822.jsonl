@@ -1,0 +1,16 @@
+{"id": "h001", "query": "先不用查知识库，等我下一步。", "expected_route": "direct", "actual_route": "direct", "route_correct": true, "latency_s": 1.453, "error": null}
+{"id": "h002", "query": "后面的回答请尽量短一点，最多三点。", "expected_route": "direct", "actual_route": "direct", "route_correct": true, "latency_s": 6.141, "error": null}
+{"id": "h003", "query": "ACHIEVE 框架里，A、C、H 分别代表什么适用场景？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 6.971, "error": null}
+{"id": "h004", "query": "DIG 框架的 Describe 阶段为什么要检查 NaN 和格式异常？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 5.175, "error": null}
+{"id": "h005", "query": "数据类任务 prompt 里为什么要写预期数量？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 6.348, "error": null}
+{"id": "h006", "query": "agent 脱轨后，Vibe Coding 101 建议的失败恢复三件套是什么？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 6.164, "error": null}
+{"id": "h007", "query": "为什么建议先用 in-memory 跑通，再迁数据库？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 5.936, "error": null}
+{"id": "h008", "query": "MCP 的 tools、resources、prompts 三原语分别由谁控制？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 5.585, "error": null}
+{"id": "h009", "query": "MCP Workshop 里，什么时候应该做成 tool，什么时候应由应用侧死代码直接调用？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 14.058, "error": null}
+{"id": "h010", "query": "MCP 笔记为什么说 JWT 和 OAuth 不是竞品，什么时候才需要 OAuth？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 1.423, "error": null}
+{"id": "h011", "query": "Streamable HTTP 和旧 HTTP+SSE transport 的关键差异是什么？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 5.95, "error": null}
+{"id": "h012", "query": "MCP Sampling 的价值和控制权边界是什么？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 6.273, "error": null}
+{"id": "h013", "query": "PostgreSQL 的 transaction isolation levels 在这四份笔记里怎么调优？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 5.769, "error": null}
+{"id": "h014", "query": "CSS Grid 的 subgrid 布局在这四份笔记里怎么用？", "expected_route": "rag", "actual_route": "rag", "route_correct": true, "latency_s": 29.641, "error": null}
+{"id": "h015", "query": "Tina 的 traceability 文档和 Vibe 的预期数量 mini-eval，本质上共同解决什么问题？", "expected_route": "agent", "actual_route": "agent", "route_correct": true, "latency_s": 12.533, "error": null}
+{"id": "h016", "query": "把 MCP 三原语控制权分离和 task-scoped tools 放在一起看，它们共同的设计原则是什么？", "expected_route": "agent", "actual_route": "agent", "route_correct": true, "latency_s": 3.259, "error": null}

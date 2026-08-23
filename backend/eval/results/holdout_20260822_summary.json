@@ -21,7 +21,8 @@
     "baseline_first_pass": "backend/eval/results/holdout_baseline_e8dddab_firstpass_20260822.jsonl",
     "baseline_after_resume": "backend/eval/results/holdout_baseline_e8dddab_after_resume_20260822.jsonl",
     "tuned": "backend/eval/results/holdout_tuned_e6a5450_20260822.jsonl",
-    "adjusted_after_router_latency_cleanup": "backend/eval/results/holdout_adjusted_697b275_20260822.jsonl"
+    "adjusted_after_router_latency_cleanup": "backend/eval/results/holdout_adjusted_697b275_20260822.jsonl",
+    "prompt_invariant_route_probe": "backend/eval/results/holdout_router_prompt_invariant_cd6c0ef_20260822.jsonl"
   },
   "metrics": {
     "baseline_first_pass": {
@@ -91,6 +92,12 @@
       "total_retries": 0,
       "remaining_route_miss_ids": ["h011"],
       "remaining_contains_fail_ids": ["h003", "h006", "h012", "h015"]
+    },
+    "prompt_invariant_route_probe": {
+      "items": 16,
+      "errors": 0,
+      "router_accuracy": "16/16",
+      "route_miss_ids": []
     }
   },
   "limitations": [
@@ -98,7 +105,8 @@
     "Baseline after-resume metrics are human-assisted and should not replace first-pass robustness metrics.",
     "Baseline h016 timed out on three consecutive attempts; partial resume files contain duplicate h016 rows, so metrics must be computed from main JSONL outputs keyed by id.",
     "Tuned latency regressed substantially while robustness and groundedness improved.",
-    "The adjusted 697b275 cleanup reused this holdout to verify router and latency changes; the 16-item holdout is now burned and should be treated only as a regression artifact, not fresh validation."
+    "The adjusted 697b275 cleanup reused this holdout to verify router and latency changes; the 16-item holdout is now burned and should be treated only as a regression artifact, not fresh validation.",
+    "The cd6c0ef prompt-invariant route probe is route-only evidence on the already-burned holdout; it does not rescore retrieval, answer quality, groundedness, or latency."
   ],
   "interpretation": {
     "headline": "The 36-item tuning partially reproduced on the fresh 16-item holdout: transport robustness and groundedness reproduced; routing and broad semantic correctness did not cleanly reproduce; latency regressed.",

@@ -30,9 +30,11 @@ harness or agent code are fixed in code, not here.
 
 - Follow-up router/latency cleanup `697b275` and adjusted holdout run
   `holdout_adjusted_697b275_20260822` used this same 16-item file again.
-  The holdout is therefore no longer fresh for future tuning decisions; use it
-  only as a burned regression artifact. Adjusted result artifact:
-  `results/holdout_adjusted_697b275_20260822.jsonl`.
+  Subsequent prompt-invariant route probe `cd6c0ef` also used it for routing
+  verification. The holdout is therefore no longer fresh for future tuning
+  decisions; use it only as a burned regression artifact. Adjusted artifacts:
+  `results/holdout_adjusted_697b275_20260822.jsonl` and
+  `results/holdout_router_prompt_invariant_cd6c0ef_20260822.jsonl`.
 
 ## 2026-07-22 - HITL write-note protocol set
 
