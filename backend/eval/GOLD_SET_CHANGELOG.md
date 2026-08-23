@@ -4,6 +4,11 @@ Revisions to `gold_set.jsonl` after the item itself was already scored — i.e.
 the label was wrong, not the system. Route/scoring bugs found in the
 harness or agent code are fixed in code, not here.
 
+## Evaluation-set governance
+
+Agents may propose a gold-set or holdout label correction only when they cite the supporting source evidence. They must not apply the correction without the user's explicit approval.
+Existing scored artifacts remain immutable and must continue to be reported under the labels used when they were produced.
+
 
 ## 2026-08-23 — successor3 holdout set
 
