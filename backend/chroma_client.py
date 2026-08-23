@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from typing import List
 
 import chromadb
@@ -66,6 +67,40 @@ def chunk_text(text: str, chunk_size: int = config.CHUNK_SIZE, overlap: int = co
     return chunks
 
 
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9+#_.-]*|[\u4e00-\u9fff]+", re.IGNORECASE)
+_RERANK_MIN_CANDIDATES = 20
+_RERANK_MULTIPLIER = 4
+
+
+def _normalize_for_match(text: str) -> str:
+    return unicodedata.normalize("NFKC", text).casefold()
+
+
+def _query_terms(query: str) -> set[str]:
+    norm = _normalize_for_match(query)
+    terms: set[str] = set()
+    for token in _TOKEN_RE.findall(norm):
+        if _CJK_RE.fullmatch(token):
+            if len(token) >= 2:
+                terms.add(token)
+            terms.update(token[i : i + 2] for i in range(max(0, len(token) - 1)))
+            terms.update(token[i : i + 3] for i in range(max(0, len(token) - 2)))
+        elif len(token) >= 2:
+            terms.add(token)
+    return terms
+
+
+def _lexical_score(terms: set[str], document: str) -> int:
+    doc = _normalize_for_match(document)
+    return sum(1 for term in terms if term in doc)
+
+
+def _candidate_count(requested: int, collection_count: int) -> int:
+    broad = max(requested, _RERANK_MIN_CANDIDATES, requested * _RERANK_MULTIPLIER)
+    return min(collection_count, broad)
+
+
 # ── Core Operations ───────────────────────────────────────────────────────────
 
 def add_documents(kb_id: int, texts: List[str], ids: List[str], metadatas: List[dict]) -> None:
@@ -77,17 +112,18 @@ def add_documents(kb_id: int, texts: List[str], ids: List[str], metadatas: List[
 def query_documents(kb_id: int, query: str, n_results: int = config.TOP_K) -> List[dict]:
     """Retrieve the most relevant document chunks for a query.
 
-    Returns a list of dicts with keys: text, filename, chunk_index, distance.
-    distance is a cosine distance in [0, 2]; lower means more relevant.
+    Returns a list of dicts with keys: text, filename, chunk_index, distance,
+    lexical_score. distance is a cosine distance in [0, 2]; lower means more relevant.
     """
     collection = _get_or_create(kb_id)
     count = collection.count()
     if count == 0:
         return []
 
+    candidate_count = _candidate_count(n_results, count)
     results = collection.query(
         query_texts=[query],
-        n_results=min(n_results, count),
+        n_results=candidate_count,
         include=["documents", "metadatas", "distances"],
     )
 
@@ -95,15 +131,21 @@ def query_documents(kb_id: int, query: str, n_results: int = config.TOP_K) -> Li
     metas = results.get("metadatas", [[]])[0] or []
     dists = results.get("distances", [[]])[0] or []
 
-    return [
-        {
-            "text": doc,
-            "filename": (metas[i] or {}).get("filename", "Unknown"),
-            "chunk_index": (metas[i] or {}).get("chunk_index", i),
-            "distance": dists[i] if i < len(dists) else 2.0,
-        }
-        for i, doc in enumerate(docs)
-    ]
+    query_terms = _query_terms(query)
+    rows = []
+    for i, doc in enumerate(docs):
+        lexical_score = _lexical_score(query_terms, doc)
+        rows.append(
+            {
+                "text": doc,
+                "filename": (metas[i] or {}).get("filename", "Unknown"),
+                "chunk_index": (metas[i] or {}).get("chunk_index", i),
+                "distance": dists[i] if i < len(dists) else 2.0,
+                "lexical_score": lexical_score,
+            }
+        )
+    rows.sort(key=lambda row: (-row["lexical_score"], row["distance"]))
+    return rows[:n_results]
 
 
 def delete_documents_by_filename(kb_id: int, filename: str) -> None:
