@@ -199,6 +199,11 @@ def test_eval_item_records_latency_breakdown_and_llm_stats():
     assert result.llm_retry_sleep_s == 5.0
 
 
+
+def test_rag_prompt_requires_supported_subpoint_coverage():
+    assert "Cover every requested subpoint" in run_eval._RAG_PROMPT_TMPL
+    assert "causal evidence" in run_eval._RAG_PROMPT_TMPL
+
 def test_aggregate_records_answer_scope_distribution():
     delivered = _item("a1", "verified")
     delivered.answer_scope = "production_delivered"

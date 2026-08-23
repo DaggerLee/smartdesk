@@ -78,6 +78,16 @@ def test_cross_source_common_principle_agent_label_stays_agent(router_mock):
     assert route("把 MCP 三原语控制权分离和 task-scoped tools 放在一起看，它们共同的设计原则是什么？") == "agent"
 
 
+def test_cross_source_shared_risk_question_lives_in_router_prompt(router_mock):
+    router_mock.return_value = _resp("agent")
+
+    query = "Tina 的 traceability 复现文档和 Vibe 的 checkpoint 共同降低什么工程风险？"
+    assert route(query) == "agent"
+    system = router_mock.call_args.kwargs["system"]
+    assert query in system
+    assert "Requires synthesis across two named concepts" in system
+
+
 def test_multi_agent_comparison_agent_label_stays_agent(router_mock):
     router_mock.return_value = _resp("agent")
 

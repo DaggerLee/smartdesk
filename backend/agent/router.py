@@ -67,6 +67,11 @@ Answer: rag
 (A corpus-bounded absence check across the knowledge base; retrieval should
 confirm whether the notes contain it.)
 
+User: Tina 的 traceability 复现文档和 Vibe 的 checkpoint 共同降低什么工程风险？
+Answer: agent
+(Requires synthesis across two named concepts/sources to identify a shared
+problem; one single-source retrieval answer is insufficient.)
+
 User: Compare LoRA and QLoRA, and explain when each should be used.
 Answer: agent
 

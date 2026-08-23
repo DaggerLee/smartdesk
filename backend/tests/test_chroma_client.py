@@ -109,3 +109,57 @@ def test_query_documents_ignores_other_cjk_question_templates_when_reranking(mon
 
     assert results[0]["filename"] == "auth.html"
     assert all(not row.get("strong_lexical_match", False) for row in results if row["filename"] == "generic.html")
+
+
+def test_query_documents_promotes_distinct_cjk_anchors_without_question_noise(monkeypatch):
+    rows = [
+        {
+            "text": f"状态水管常见模式 filler {i}",
+            "filename": "generic.html",
+            "chunk_index": i,
+            "distance": 0.10 + i * 0.01,
+        }
+        for i in range(5)
+    ]
+    rows.append(
+        {
+            "text": "状态驻留在单机内存，负载均衡器随机撒请求。统一解法是无状态，每请求自带全部信息，机器完全等价。",
+            "filename": "mcp.html",
+            "chunk_index": 13,
+            "distance": 0.75,
+        }
+    )
+    collection = _FakeCollection(rows)
+    monkeypatch.setattr(chroma_client, "_get_or_create", lambda kb_id: collection)
+
+    results = chroma_client.query_documents(1, "状态驻留在内存里时，三个场景的统一解法是什么？", n_results=5)
+
+    assert results[0]["filename"] == "mcp.html"
+    assert results[0]["strong_lexical_match"] is True
+
+
+def test_query_documents_promotes_specific_latin_phrase_anchors(monkeypatch):
+    rows = [
+        {
+            "text": f"generic shared purpose filler {i}",
+            "filename": "generic.html",
+            "chunk_index": i,
+            "distance": 0.10 + i * 0.01,
+        }
+        for i in range(5)
+    ]
+    rows.append(
+        {
+            "text": "Beta Inspector = 不带 LLM 的 server 沙箱，用于 quality gate 排错。",
+            "filename": "mcp.html",
+            "chunk_index": 5,
+            "distance": 0.80,
+        }
+    )
+    collection = _FakeCollection(rows)
+    monkeypatch.setattr(chroma_client, "_get_or_create", lambda kb_id: collection)
+
+    results = chroma_client.query_documents(1, "Alpha quality gate and Beta Inspector shared purpose", n_results=5)
+
+    assert results[0]["filename"] == "mcp.html"
+    assert results[0]["strong_lexical_match"] is True

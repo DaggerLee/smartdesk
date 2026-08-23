@@ -87,6 +87,7 @@ _CJK_QUESTION_TERMS = (
     "哪三",
 )
 _CJK_GENERIC_MARKERS = ("什么", "多少", "几", "哪", "谁", "吗", "是否", "有没有")
+_CJK_LOW_SIGNAL_TERMS = {"共同", "解决", "问题", "分别"}
 _CJK_FILLER_CHARS = "的了在里和与及是有"
 
 
@@ -104,19 +105,30 @@ def _cjk_terms(token: str) -> set[str]:
 
     terms = {compact}
     if len(compact) > 4:
-        terms.update(compact[i : i + 2] for i in range(0, len(compact) - 1, 2))
-        terms.update(compact[i : i + 3] for i in range(0, len(compact) - 2, 3))
-    return terms
+        terms.update(compact[i : i + 2] for i in range(0, len(compact) - 1))
+        terms.update(compact[i : i + 3] for i in range(0, len(compact) - 2))
+    return {
+        term
+        for term in terms
+        if term not in _CJK_LOW_SIGNAL_TERMS
+        and not any(low_signal in term for low_signal in _CJK_LOW_SIGNAL_TERMS)
+        and not any(marker in term for marker in _CJK_GENERIC_MARKERS)
+    }
 
 
 def _query_terms(query: str) -> set[str]:
     norm = _normalize_for_match(query)
     terms: set[str] = set()
+    previous_latin: str | None = None
     for token in _TOKEN_RE.findall(norm):
         if _CJK_RE.fullmatch(token):
             terms.update(_cjk_terms(token))
+            previous_latin = None
         elif len(token) >= 2:
             terms.add(token)
+            if previous_latin:
+                terms.add(f"{previous_latin} {token}")
+            previous_latin = token
     return terms
 
 
@@ -133,13 +145,16 @@ def _lexical_score(terms: set[str], document: str) -> int:
 
 def _strong_lexical_match(terms: set[str], document: str) -> bool:
     doc = _normalize_for_match(document)
+    cjk_hits = 0
     for term in terms:
         if _CJK_RE.search(term):
-            if len(term) >= 4 and term in doc:
-                return True
+            if term in doc:
+                if len(term) >= 4:
+                    return True
+                cjk_hits += 1
         elif len(term) >= 4 and _term_in_document(term, doc):
             return True
-    return False
+    return cjk_hits >= 2
 
 
 def _candidate_count(requested: int, collection_count: int) -> int:
