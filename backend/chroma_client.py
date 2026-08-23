@@ -196,7 +196,7 @@ def query_documents(kb_id: int, query: str, n_results: int = config.TOP_K) -> Li
     rows.sort(
         key=lambda row: (
             not row["strong_lexical_match"],
-            -row["lexical_score"],
+            -row["lexical_score"] if row["strong_lexical_match"] else 0,
             row["distance"],
         )
     )
