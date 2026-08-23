@@ -4,6 +4,30 @@ Revisions to `gold_set.jsonl` after the item itself was already scored — i.e.
 the label was wrong, not the system. Route/scoring bugs found in the
 harness or agent code are fixed in code, not here.
 
+## 2026-08-22 — fresh holdout reproduction set
+
+- Added `holdout_set_2026_08.jsonl` as a fresh 16-item holdout for checking
+  whether the 36-item W4/error-analysis tuning generalized beyond the set used
+  for repeated tuning and rescoring.
+- Holdout SHA-256:
+  `18342083337d982ccda38ca026c4c4dba328d729143e2547c5863f351351e155`.
+- The set uses the same synonym-group keyword syntax described below; baseline
+  backports of `_normalize` / `_keyword_hit` were required so both comparison
+  legs scored the new holdout with the same matcher semantics.
+- First-pass comparison used the same KB (`kb_1`, 50 embeddings) and
+  `models/gemini-3.5-flash`: baseline parent `e8dddab` / prep `d2aa26a` versus
+  tuned parent `e6a5450` / prep `e0ec68a`.
+- Reproduction ruling: partial. Transport robustness and groundedness
+  reproduced; routing and broad semantic correctness did not cleanly reproduce;
+  tuned latency regressed.
+- Result artifacts:
+  `results/holdout_baseline_e8dddab_firstpass_20260822.jsonl`,
+  `results/holdout_baseline_e8dddab_after_resume_20260822.jsonl`,
+  `results/holdout_tuned_e6a5450_20260822.jsonl`, and
+  `results/holdout_20260822_summary.json`.
+- This section records the new holdout protocol and outcome; it is not a
+  post-score label correction.
+
 ## 2026-07-22 - HITL write-note protocol set
 
 - Added `hitl_gold_set.jsonl` as a separate deterministic protocol set rather

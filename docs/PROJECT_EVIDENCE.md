@@ -152,3 +152,41 @@ boundary.
 content-security-policy rollout or a backend sanitization framework. Separate
 observations about narrow-screen layout, interrupted SSE state, and paused
 flow refresh continuity remain deferred and are not claimed as fixed.
+
+## EV-007 — Fresh holdout reproduction check
+
+**Problem:** The 36-item evaluation set had been used for repeated tuning,
+rescoring, and error analysis, so its improvements needed a fresh holdout check
+before being treated as generalized agent-quality gains.
+
+**Delivered:** A 16-item fresh holdout set and same-KB, same-model comparison
+between the original baseline leg and the tuned W4/error-analysis leg.
+
+**Evidence:**
+
+- Holdout set: `backend/eval/holdout_set_2026_08.jsonl`.
+- Holdout SHA-256:
+  `18342083337d982ccda38ca026c4c4dba328d729143e2547c5863f351351e155`.
+- Shared KB: Chroma `kb_1`, 50 embeddings.
+- Model: `models/gemini-3.5-flash`.
+- Baseline leg: parent `e8dddab`, prep commit `d2aa26a`, first-pass result
+  `backend/eval/results/holdout_baseline_e8dddab_firstpass_20260822.jsonl`.
+- Tuned leg: parent `e6a5450`, prep commit `e0ec68a`, result
+  `backend/eval/results/holdout_tuned_e6a5450_20260822.jsonl`.
+- Summary artifact:
+  `backend/eval/results/holdout_20260822_summary.json`.
+- First-pass baseline produced 6 transport/Gemini timeout errors
+  (`h003`, `h006`, `h008`, `h010`, `h013`, `h016`); tuned produced 0.
+- First-pass contains pass improved from 8/16 (50.0%) to 12/16 (75.0%).
+- Grounded rate improved from 3/6 (50.0%) to 11/12 (91.7%).
+- The timeout difference is code-backed: the baseline client retries only HTTP
+  429/500/503/504, while the tuned client also retries `Timeout` and
+  `ConnectionError`.
+
+**Limitations:** The result is a 16-item holdout, not a multi-run statistical
+study. The reproduction is partial: robustness and groundedness transferred,
+but routing did not cleanly improve, broad semantic correctness narrowed after
+manual baseline resume, and tuned latency regressed substantially (105.61s
+average versus 44.05s baseline first pass). Baseline `h016` timed out on three
+consecutive attempts; partial resume files contain duplicate `h016` rows, so
+metrics must be computed from the main JSONL outputs keyed by `id`.
