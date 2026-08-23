@@ -42,3 +42,20 @@ def test_retrieve_relevance_accepts_strong_lexical_match(monkeypatch):
     result = RetrieveTool(kb_id=1).run(query="anything")
 
     assert result["relevance_ok"] is True
+
+
+def test_retrieve_relevance_rejects_weak_lexical_only_match(monkeypatch):
+    rows = [
+        {
+            "text": "only generic question phrasing matched",
+            "filename": "generic.html",
+            "chunk_index": 1,
+            "distance": 0.90,
+            "lexical_score": 2,
+        }
+    ]
+    monkeypatch.setattr("agent.tools.retrieve.chroma_client.query_documents", lambda *args, **kwargs: rows)
+
+    result = RetrieveTool(kb_id=1).run(query="anything")
+
+    assert result["relevance_ok"] is False

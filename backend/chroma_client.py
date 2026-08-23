@@ -71,6 +71,8 @@ _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9+#_.-]*|[\u4e00-\u9fff]+", re.IGNORECASE)
 _RERANK_MIN_CANDIDATES = 20
 _RERANK_MULTIPLIER = 4
+_CJK_QUESTION_TERMS = ("是什么", "为什么", "怎么", "如何", "什么", "哪几", "哪三")
+_CJK_FILLER_CHARS = "的了在里和与及是"
 
 
 def _normalize_for_match(text: str) -> str:
@@ -82,18 +84,28 @@ def _query_terms(query: str) -> set[str]:
     terms: set[str] = set()
     for token in _TOKEN_RE.findall(norm):
         if _CJK_RE.fullmatch(token):
-            if len(token) >= 2:
-                terms.add(token)
-            terms.update(token[i : i + 2] for i in range(max(0, len(token) - 1)))
-            terms.update(token[i : i + 3] for i in range(max(0, len(token) - 2)))
+            compact = token
+            for question_term in _CJK_QUESTION_TERMS:
+                compact = compact.replace(question_term, "")
+            compact = "".join(ch for ch in compact if ch not in _CJK_FILLER_CHARS)
+            if len(compact) >= 2:
+                terms.add(compact)
+                terms.update(compact[i : i + 2] for i in range(len(compact) - 1))
+                terms.update(compact[i : i + 3] for i in range(len(compact) - 2))
         elif len(token) >= 2:
             terms.add(token)
     return terms
 
 
+def _term_in_document(term: str, document: str) -> bool:
+    if _CJK_RE.search(term):
+        return term in document
+    return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", document) is not None
+
+
 def _lexical_score(terms: set[str], document: str) -> int:
     doc = _normalize_for_match(document)
-    return sum(1 for term in terms if term in doc)
+    return sum(1 for term in terms if _term_in_document(term, doc))
 
 
 def _candidate_count(requested: int, collection_count: int) -> int:
