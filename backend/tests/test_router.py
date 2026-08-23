@@ -58,30 +58,36 @@ def test_explicit_persist_intent_overrides_model_rag_label(router_mock):
 
     assert route("Save this as a Markdown file titled Smoke") == "agent"
 
-def test_single_knowledge_base_fact_question_demotes_agent_label(router_mock):
-    router_mock.return_value = _resp("agent")
+def test_source_bound_fact_invariant_lives_in_router_prompt(router_mock):
+    router_mock.return_value = _resp("rag")
 
-    assert route("MCP 笔记为什么说 JWT 和 OAuth 不是竞品，什么时候才需要 OAuth？") == "rag"
+    query = "MCP 笔记为什么说 JWT 和 OAuth 不是竞品，什么时候才需要 OAuth？"
+    assert route(query) == "rag"
+    system = router_mock.call_args.kwargs["system"]
+    assert "Source-bound single-fact" in system
+    assert "same-topic technical-difference" in system
+    assert "corpus-bounded absence-check" in system
+    assert query in system
+    assert "Streamable HTTP 和旧 HTTP+SSE transport 的关键差异是什么？" in system
+    assert "PostgreSQL 的 transaction isolation levels 在这四份笔记里怎么调优？" in system
 
 
-def test_cross_source_common_principle_stays_agent(router_mock):
+def test_cross_source_common_principle_agent_label_stays_agent(router_mock):
     router_mock.return_value = _resp("agent")
 
     assert route("把 MCP 三原语控制权分离和 task-scoped tools 放在一起看，它们共同的设计原则是什么？") == "agent"
 
 
-def test_multi_agent_comparison_is_not_demoted(router_mock):
+def test_multi_agent_comparison_agent_label_stays_agent(router_mock):
     router_mock.return_value = _resp("agent")
 
     assert route("Multi-Agent 架构什么时候比单 Agent 更合适？") == "agent"
 
 
-def test_parallel_lookup_is_not_demoted(router_mock):
+def test_parallel_lookup_agent_label_stays_agent(router_mock):
     router_mock.return_value = _resp("agent")
 
     assert route("同时查一下 Reflection 和 Planning 分别是什么？") == "agent"
-
-
 
 
 def test_explicit_persist_intent_fails_over_to_agent_on_protocol_error(router_mock):

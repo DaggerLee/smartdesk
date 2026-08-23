@@ -20,7 +20,8 @@
   "artifact_files": {
     "baseline_first_pass": "backend/eval/results/holdout_baseline_e8dddab_firstpass_20260822.jsonl",
     "baseline_after_resume": "backend/eval/results/holdout_baseline_e8dddab_after_resume_20260822.jsonl",
-    "tuned": "backend/eval/results/holdout_tuned_e6a5450_20260822.jsonl"
+    "tuned": "backend/eval/results/holdout_tuned_e6a5450_20260822.jsonl",
+    "adjusted_after_router_latency_cleanup": "backend/eval/results/holdout_adjusted_697b275_20260822.jsonl"
   },
   "metrics": {
     "baseline_first_pass": {
@@ -70,17 +71,38 @@
       "faithfulness_mean": 0.95,
       "answer_relevancy_mean": 1.0,
       "avg_latency_s": 105.61
+    },
+    "adjusted_after_router_latency_cleanup": {
+      "items": 16,
+      "errors": 0,
+      "error_ids": [],
+      "router_accuracy": "15/16",
+      "retrieval_hit": "12/12",
+      "relevance_ok": "12/12",
+      "contains_pass": "12/16",
+      "grounded_rate": "11/12",
+      "faithfulness_mean": 1.0,
+      "answer_relevancy_mean": 1.0,
+      "avg_latency_s": 30.86,
+      "avg_router_latency_s": 4.52,
+      "avg_diagnostic_retrieval_latency_s": 0.02,
+      "avg_pipeline_latency_s": 20.52,
+      "avg_llm_calls": 4.19,
+      "total_retries": 0,
+      "remaining_route_miss_ids": ["h011"],
+      "remaining_contains_fail_ids": ["h003", "h006", "h012", "h015"]
     }
   },
   "limitations": [
     "Single 16-item same-KB holdout run, not a multi-run statistical study.",
     "Baseline after-resume metrics are human-assisted and should not replace first-pass robustness metrics.",
     "Baseline h016 timed out on three consecutive attempts; partial resume files contain duplicate h016 rows, so metrics must be computed from main JSONL outputs keyed by id.",
-    "Tuned latency regressed substantially while robustness and groundedness improved."
+    "Tuned latency regressed substantially while robustness and groundedness improved.",
+    "The adjusted 697b275 cleanup reused this holdout to verify router and latency changes; the 16-item holdout is now burned and should be treated only as a regression artifact, not fresh validation."
   ],
   "interpretation": {
     "headline": "The 36-item tuning partially reproduced on the fresh 16-item holdout: transport robustness and groundedness reproduced; routing and broad semantic correctness did not cleanly reproduce; latency regressed.",
     "baseline_timeout_is_signal": "Baseline retries only HTTP 429/500/503/504; tuned additionally retries requests Timeout and ConnectionError. First-pass baseline timeouts are therefore a real robustness gap, not rows to symmetrically exclude.",
-    "next_step": "Isolate latency/routing trade-offs before more gold-set tuning: keep timeout retry, benchmark route decisions and per-node latency, then fix h010-style agent-overrouting."
+    "next_step": "Use a new holdout for future tuning decisions. Treat h011 and h015 from the burned set as regression/debugging signals only."
   }
 }

@@ -28,6 +28,12 @@ harness or agent code are fixed in code, not here.
 - This section records the new holdout protocol and outcome; it is not a
   post-score label correction.
 
+- Follow-up router/latency cleanup `697b275` and adjusted holdout run
+  `holdout_adjusted_697b275_20260822` used this same 16-item file again.
+  The holdout is therefore no longer fresh for future tuning decisions; use it
+  only as a burned regression artifact. Adjusted result artifact:
+  `results/holdout_adjusted_697b275_20260822.jsonl`.
+
 ## 2026-07-22 - HITL write-note protocol set
 
 - Added `hitl_gold_set.jsonl` as a separate deterministic protocol set rather

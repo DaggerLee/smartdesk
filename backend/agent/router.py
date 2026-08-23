@@ -27,7 +27,8 @@ rag
 - A single factual question
 - The answer is expected to exist in the knowledge base
 - One retrieval should usually be sufficient
-- No comparison, planning, or multi-step reasoning required
+- Source-bound single-fact, tightly related factual explanation, same-topic technical-difference, and corpus-bounded absence-check questions stay here, even when phrased as why/when/what/how/difference
+- No planning, current/external lookup, open-ended synthesis across multiple independent sources, or multi-step tool reasoning required
 
 agent
 - Requires multiple retrieval steps
@@ -50,6 +51,22 @@ Answer: rag
 User: What is the Transformer attention mechanism?
 Answer: rag
 
+
+User: MCP 笔记为什么说 JWT 和 OAuth 不是竞品，什么时候才需要 OAuth？
+Answer: rag
+(Two tightly related facts from one named note/source; not a comparison,
+planning task, or external lookup.)
+
+User: Streamable HTTP 和旧 HTTP+SSE transport 的关键差异是什么？
+Answer: rag
+(A technical difference inside one source-bounded topic; one retrieval pass
+should answer it.)
+
+User: PostgreSQL 的 transaction isolation levels 在这四份笔记里怎么调优？
+Answer: rag
+(A corpus-bounded absence check across the knowledge base; retrieval should
+confirm whether the notes contain it.)
+
 User: Compare LoRA and QLoRA, and explain when each should be used.
 Answer: agent
 
@@ -70,69 +87,6 @@ Answer: rag
 """
 
 _VALID_LABELS = ("direct", "rag", "agent")
-
-_AGENT_REQUIRED_MARKERS = (
-    "compare",
-    "comparison",
-    "latest",
-    "today",
-    "web search",
-    "multi-agent",
-    "multi agent",
-    "planning",
-    "reflection",
-    "比较",
-    "对比",
-    "共同",
-    "放在一起",
-    "综合",
-    "规划",
-    "计划",
-    "最新",
-    "今天",
-    "当前",
-    "搜索",
-    "查一下",
-    "同时",
-    "分别查",
-    "多工具",
-    "多步骤",
-    "比",
-)
-
-_SOURCE_BOUND_MARKERS = (
-    "笔记",
-    "知识库",
-    "文档",
-    "资料",
-    "notes",
-)
-
-_SINGLE_FACT_MARKERS = (
-    "是什么",
-    "为什么",
-    "怎么",
-    "如何",
-    "什么时候",
-)
-
-
-def _should_demote_agent_to_rag(query: str) -> bool:
-    """Keep single knowledge-base fact questions on the cheaper RAG path.
-
-    The LLM router sometimes treats a hard two-part factual question as
-    "agent" because it sees synthesis work. SmartDesk's eval contract keeps
-    single-source factual explanation on RAG; agent is reserved for comparison,
-    planning, current/external lookup, or multi-source synthesis.
-    """
-    q = query.strip().lower()
-    if any(marker in q for marker in _AGENT_REQUIRED_MARKERS):
-        return False
-    if not any(marker in q for marker in _SOURCE_BOUND_MARKERS):
-        return False
-    return any(marker in query for marker in _SINGLE_FACT_MARKERS)
-
-
 
 def route(query: str) -> str:
     """Classify a single query into one of three execution paths.
@@ -168,7 +122,5 @@ def route(query: str) -> str:
 
     if write_intent == "persist":
         decision = "agent"
-    elif decision == "agent" and _should_demote_agent_to_rag(query):
-        decision = "rag"
     _trace_write({"type": "router_decision", "raw_text": raw_text, "decision": decision})
     return decision
