@@ -145,7 +145,7 @@ _RELEV_SYSTEM = (
 )
 _RAG_PROMPT_TMPL = (
     "Use the following knowledge base excerpts to answer the question.\n"
-    "Cover every requested subpoint that is supported by the excerpts; for why questions, include the causal evidence and any diagnostic method or root-cause chain before the final conclusion.\n"
+    "Cover every requested subpoint that is supported by the excerpts; for why questions, include causal evidence before the final conclusion, and mention diagnostic methods or root-cause chains only when the excerpts explicitly provide them.\n"
     "If the excerpts do not contain relevant information, say so clearly.\n\n"
     "Knowledge base:\n{context}\n\n"
     "Question: {query}"

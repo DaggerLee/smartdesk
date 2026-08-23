@@ -203,7 +203,7 @@ def test_eval_item_records_latency_breakdown_and_llm_stats():
 def test_rag_prompt_requires_supported_subpoint_coverage():
     assert "Cover every requested subpoint" in run_eval._RAG_PROMPT_TMPL
     assert "causal evidence" in run_eval._RAG_PROMPT_TMPL
-    assert "diagnostic method or root-cause chain" in run_eval._RAG_PROMPT_TMPL
+    assert "only when the excerpts explicitly provide them" in run_eval._RAG_PROMPT_TMPL
 
 def test_aggregate_records_answer_scope_distribution():
     delivered = _item("a1", "verified")
