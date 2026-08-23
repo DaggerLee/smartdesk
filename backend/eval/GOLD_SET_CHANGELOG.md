@@ -4,6 +4,28 @@ Revisions to `gold_set.jsonl` after the item itself was already scored — i.e.
 the label was wrong, not the system. Route/scoring bugs found in the
 harness or agent code are fixed in code, not here.
 
+## 2026-08-23 — successor holdout set
+
+- Added `holdout_set_2026_08_successor.jsonl` as the successor 18-item
+  holdout after the CJK retrieval, cross-source router, and eval RAG prompt
+  failure-class fixes were committed. This set is reserved for one formal
+  generalization run only; after inspection it is burned for future tuning.
+- Holdout SHA-256:
+  `543c0a0f00d686d7d038366a56bd761d944a0d2322626e8508cbabdc55cac4c4`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`, which is present in
+  `docs-local/notes/` but not in the rebuilt `kb_1` index.
+- Coverage uses new IDs `s001`-`s018` and new phrasings for the same broad
+  failure classes: CJK compound retrieval, causal diagnostic-chain answers,
+  cross-source synthesis routing, parallel dual-concept retrieval, and
+  corpus-negative absence checks.
+- The two absence rows were checked by literal search for the absent topics
+  (`GraphQL`/`federation`/`schema stitching`, `CUDA`/`kernel fusion`/
+  `shared memory`) across the four indexed note files.
+
 ## 2026-08-23 — fresh2 holdout set
 
 - Added `holdout_set_2026_08_fresh2.jsonl` as a new 18-item holdout because
