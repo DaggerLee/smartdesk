@@ -3,11 +3,13 @@
 Patches agent.router.complete (local binding) so no real API calls are made.
 """
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent.router import route
+from agent.router import SYSTEM_PROMPT, route
 from llm.client import LLMProtocolError, LLMResponse
 
 
@@ -61,15 +63,29 @@ def test_explicit_persist_intent_overrides_model_rag_label(router_mock):
 def test_source_bound_fact_invariant_lives_in_router_prompt(router_mock):
     router_mock.return_value = _resp("rag")
 
-    query = "MCP 笔记为什么说 JWT 和 OAuth 不是竞品，什么时候才需要 OAuth？"
+    query = "某份内部笔记里，短有效期凭据和续期凭据分别负责什么？"
     assert route(query) == "rag"
     system = router_mock.call_args.kwargs["system"]
     assert "Source-bound single-fact" in system
     assert "same-topic technical-difference" in system
     assert "corpus-bounded absence-check" in system
     assert query in system
-    assert "Streamable HTTP 和旧 HTTP+SSE transport 的关键差异是什么？" in system
-    assert "PostgreSQL 的 transaction isolation levels 在这四份笔记里怎么调优？" in system
+    assert "某个远程协议的新旧传输方式，在连接状态处理上有什么核心差异？" in system
+    assert "这组项目笔记里有没有讲消息队列分区再均衡策略？" in system
+
+
+def test_router_prompt_does_not_embed_gold_or_holdout_queries():
+    eval_dir = Path("eval")
+    gold_queries = set()
+    for path in [eval_dir / "gold_set.jsonl", *eval_dir.glob("holdout_set_*.jsonl")]:
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            gold_queries.add(record["query"])
+
+    leaked = sorted(query for query in gold_queries if query in SYSTEM_PROMPT)
+    assert leaked == []
 
 
 def test_cross_source_common_principle_agent_label_stays_agent(router_mock):

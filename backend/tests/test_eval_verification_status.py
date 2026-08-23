@@ -52,6 +52,17 @@ def test_aggregate_records_verification_status_distribution():
     }
 
 
+def test_report_prints_canonical_embedding_model(capsys):
+    aggregate = run_eval.aggregate([_item("a1", "verified")])
+
+    run_eval.print_report(aggregate, [_item("a1", "verified")])
+
+    output = capsys.readouterr().out
+    assert f"embedding: {run_eval.config.EMBEDDING_MODEL}" in output
+    assert "all-MiniLM-L6-v2" not in output
+    assert "relevance_ok expected ~0%" not in output
+
+
 def test_history_archive_preserves_status_distribution(tmp_path):
     aggregate = run_eval.aggregate([
         _item("a1", "not_applicable"),

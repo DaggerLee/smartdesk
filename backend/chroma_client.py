@@ -11,7 +11,7 @@ import config
 # Multilingual model (was DefaultEmbeddingFunction, English-only ONNX model —
 # it embedded Chinese KB content poorly, see config.RELEVANCE_THRESHOLD comment).
 _embedding_fn = SentenceTransformerEmbeddingFunction(
-    model_name="paraphrase-multilingual-MiniLM-L12-v2"
+    model_name=config.EMBEDDING_MODEL
 )
 
 # Local persistent ChromaDB with telemetry disabled

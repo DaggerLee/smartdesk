@@ -581,8 +581,8 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M")
     w = 66
     print(f"\n{'='*w}")
-    print(f"  SmartDesk v2 Baseline Eval  —  {run_at}")
-    print(f"  embedding: all-MiniLM-L6-v2  (before multilingual swap)")
+    print(f"  SmartDesk v2 Eval  —  {run_at}")
+    print(f"  embedding: {config.EMBEDDING_MODEL}")
     print(f"{'='*w}")
 
     print(f"\n[Layer 1] Router Accuracy")
@@ -593,7 +593,6 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     print(f"\n[Layer 2] Retrieval Recall@{TOP_K}")
     print(f"  keyword hit rate:   {agg['retrieval_recall_k']}")
     print(f"  relevance_ok rate:  {agg['relevance_ok_rate']}")
-    print(f"  [relevance_ok expected ~0%: Chinese text vs English MiniLM]")
 
     print(f"\n[Layer 3] E2E Answer Quality")
     print(f"  contains_pass:      {agg['e2e_contains_pass']}")
@@ -708,6 +707,7 @@ def append_history(
         "run_at": datetime.now().isoformat(timespec="seconds"),
         "git_commit": _git_commit(),
         "model": config.GEMINI_MODEL,
+        "embedding_model": config.EMBEDDING_MODEL,
         "gold_set_items": n_items,
         "limit": limit,
         "eval_key_used": bool(_eval_key),

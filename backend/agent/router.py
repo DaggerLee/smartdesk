@@ -52,17 +52,17 @@ User: What is the Transformer attention mechanism?
 Answer: rag
 
 
-User: MCP 笔记为什么说 JWT 和 OAuth 不是竞品，什么时候才需要 OAuth？
+User: 某份内部笔记里，短有效期凭据和续期凭据分别负责什么？
 Answer: rag
 (Two tightly related facts from one named note/source; not a comparison,
 planning task, or external lookup.)
 
-User: Streamable HTTP 和旧 HTTP+SSE transport 的关键差异是什么？
+User: 某个远程协议的新旧传输方式，在连接状态处理上有什么核心差异？
 Answer: rag
 (A technical difference inside one source-bounded topic; one retrieval pass
 should answer it.)
 
-User: PostgreSQL 的 transaction isolation levels 在这四份笔记里怎么调优？
+User: 这组项目笔记里有没有讲消息队列分区再均衡策略？
 Answer: rag
 (A corpus-bounded absence check across the knowledge base; retrieval should
 confirm whether the notes contain it.)

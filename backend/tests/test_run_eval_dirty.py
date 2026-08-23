@@ -129,3 +129,4 @@ def test_append_history_records_gold_identity(tmp_path):
     record = json.loads((tmp_path / "history.jsonl").read_text().strip())
     assert record["gold_set_path"] == str(custom_gold)
     assert record["gold_set_sha256"] == "hash123"
+    assert record["embedding_model"] == run_eval.config.EMBEDDING_MODEL
