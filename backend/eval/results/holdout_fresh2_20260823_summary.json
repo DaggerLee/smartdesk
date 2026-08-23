@@ -12,10 +12,10 @@
       "MCP_Distilled_Notes.html"
     ]
   },
-  "code_commit_under_test": "aae0e39",
+  "code_commit_under_test": "9732d9e",
   "artifact_files": {
-    "fresh2": "backend/eval/results/holdout_fresh2_aae0e39_20260823.jsonl",
-    "burned_rerank_regression": "backend/eval/results/holdout_rerank_e6e7c64_20260823.jsonl"
+    "fresh2": "backend/eval/results/holdout_fresh2_9732d9e_20260823.jsonl",
+    "burned_rerank_regression": "backend/eval/results/holdout_rerank_0786271_20260823.jsonl"
   },
   "metrics": {
     "fresh2": {
@@ -23,17 +23,19 @@
       "errors": 0,
       "error_ids": [],
       "router_accuracy": "17/18",
-      "retrieval_hit": "14/14",
-      "relevance_ok": "14/14",
+      "retrieval_hit_positive_queries": "13/14",
+      "relevance_ok_positive_queries": "14/14",
       "contains_pass": "15/18",
       "grounded_rate": "14/14",
       "faithfulness_mean": 1.0,
+      "faithfulness_n": 3,
       "answer_relevancy_mean": 1.0,
-      "avg_latency_s": 23.70,
-      "avg_router_latency_s": 6.75,
-      "avg_diagnostic_retrieval_latency_s": 0.41,
-      "avg_pipeline_latency_s": 10.84,
-      "avg_llm_calls": 3.33,
+      "answer_relevancy_n": 3,
+      "avg_latency_s": 23.62,
+      "avg_router_latency_s": 5.05,
+      "avg_diagnostic_retrieval_latency_s": 0.02,
+      "avg_pipeline_latency_s": 11.93,
+      "avg_llm_calls": 3.50,
       "total_retries": 0,
       "route_miss_ids": ["f014"],
       "contains_fail_ids": ["f005", "f006", "f013"],
@@ -43,23 +45,29 @@
       "items": 16,
       "errors": 0,
       "router_accuracy": "16/16",
-      "retrieval_hit": "12/12",
-      "relevance_ok": "12/12",
-      "contains_pass": "16/16",
+      "retrieval_hit_positive_queries": "12/12",
+      "relevance_ok_positive_queries": "12/12",
+      "contains_pass": "15/16",
       "grounded_rate": "11/12",
       "faithfulness_mean": 1.0,
-      "answer_relevancy_mean": 1.0
+      "faithfulness_n": 2,
+      "answer_relevancy_mean": 1.0,
+      "answer_relevancy_n": 2,
+      "contains_fail_ids": ["h015"],
+      "grounded_fail_ids": ["h016"]
     }
   },
   "interpretation": {
-    "headline": "Lexical rerank fixes the burned holdout answer-quality misses and generalizes retrieval/relevance on fresh2, but fresh2 still exposes three answer-coverage misses and one benign route miss.",
-    "burned_result_use": "The 16-item 2026_08 holdout is burned; its 16/16 contains result is regression evidence only, not fresh validation.",
-    "fresh_result_use": "Fresh2 is now the current generalization evidence. Do not tune directly against it without creating a successor holdout.",
-    "next_step": "Diagnose f005/f013 lexical retrieval coverage and f006 keyword strictness/generation coverage on a separate debug set, then verify on a new holdout. f014 route miss produced a good grounded answer via RAG, so it is lower priority than answer-coverage misses."
+    "headline": "Bounded lexical rerank improves the burned-set retrieval failures and preserves positive-query relevance on fresh2, but fresh2 still exposes three answer-coverage misses and one benign route miss.",
+    "burned_result_use": "The 16-item 2026_08 holdout is burned; its latest rerank run is regression evidence only, not fresh validation.",
+    "fresh_result_use": "Fresh2 is now the current generalization evidence. It was scored once after the bounded lexical fix and is now burned for future tuning decisions.",
+    "next_step": "Diagnose f005/f013 lexical retrieval coverage and f006 answer keyword coverage on a separate debug set, then verify on a successor fresh holdout. f014 route miss produced a good grounded answer via RAG, so it is lower priority than answer-coverage misses."
   },
   "limitations": [
     "Single 18-item same-KB holdout run, not a multi-run statistical study.",
     "Fresh2 was created after inspecting the burned set failure classes; it tests generalization to new questions but is not independent of the chosen failure taxonomy.",
+    "The relevance denominator contains only answerable positive queries because run_eval does not perform diagnostic retrieval for unanswerable rows; this run measures retrieval sensitivity, not negative-query specificity.",
+    "Direct-control rows f001/f002 used min_hits=1, so their contains_pass result should be read with the recorded answer text, not as a standalone behavioral-proof metric.",
     "Route-only and full-pipeline runs use live Gemini output, so exact answer wording may vary across reruns."
   ]
 }
