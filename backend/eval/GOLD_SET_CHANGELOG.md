@@ -25,6 +25,14 @@ harness or agent code are fixed in code, not here.
 - The two absence rows were checked by literal search for the absent topics
   (`GraphQL`/`federation`/`schema stitching`, `CUDA`/`kernel fusion`/
   `shared memory`) across the four indexed note files.
+- First formal successor run:
+  `results/holdout_successor_d22c807_20260823.jsonl`. Metrics: errors `0`,
+  router `18/18`, positive-query retrieval `14/14`, positive-query relevance
+  `14/14`, contains `18/18`, grounded `11/14`, faithfulness `0.9` (`n=3`),
+  answer relevancy `1.0` (`n=3`), average latency `28.39s`, retries `0`.
+  Groundedness failed on `s003`, `s004`, and `s012`; the run is now burned
+  and is evidence of eval RAG prompt overreach, not a set to tune further.
+
 
 ## 2026-08-23 — fresh2 holdout set
 
