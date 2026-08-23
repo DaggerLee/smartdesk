@@ -12,10 +12,11 @@
       "MCP_Distilled_Notes.html"
     ]
   },
-  "code_commit_under_test": "9732d9e",
+  "code_commit_under_test": "7c14113",
+  "retrieval_code_commit": "bf105b0",
   "artifact_files": {
-    "fresh2": "backend/eval/results/holdout_fresh2_9732d9e_20260823.jsonl",
-    "burned_rerank_regression": "backend/eval/results/holdout_rerank_0786271_20260823.jsonl"
+    "fresh2": "backend/eval/results/holdout_fresh2_7c14113_20260823.jsonl",
+    "burned_rerank_regression": "backend/eval/results/holdout_rerank_bf105b0_20260823.jsonl"
   },
   "metrics": {
     "fresh2": {
@@ -23,45 +24,54 @@
       "errors": 0,
       "error_ids": [],
       "router_accuracy": "17/18",
-      "retrieval_hit_positive_queries": "13/14",
-      "relevance_ok_positive_queries": "14/14",
+      "retrieval_hit_positive_queries": "14/14",
+      "relevance_ok_positive_queries": "13/14",
       "contains_pass": "15/18",
       "grounded_rate": "14/14",
       "faithfulness_mean": 1.0,
       "faithfulness_n": 3,
-      "answer_relevancy_mean": 1.0,
+      "answer_relevancy_mean": 0.667,
       "answer_relevancy_n": 3,
-      "avg_latency_s": 23.62,
-      "avg_router_latency_s": 5.05,
+      "avg_latency_s": 24.25,
+      "avg_router_latency_s": 5.26,
       "avg_diagnostic_retrieval_latency_s": 0.02,
-      "avg_pipeline_latency_s": 11.93,
+      "avg_pipeline_latency_s": 11.47,
       "avg_llm_calls": 3.50,
-      "total_retries": 0,
+      "total_retries": 1,
       "route_miss_ids": ["f014"],
-      "contains_fail_ids": ["f005", "f006", "f013"],
+      "relevance_false_positive_query_ids": ["f011"],
+      "contains_fail_ids": ["f006", "f014", "f015"],
       "grounded_fail_ids": []
     },
     "burned_rerank_regression": {
       "items": 16,
       "errors": 0,
+      "error_ids": [],
       "router_accuracy": "16/16",
       "retrieval_hit_positive_queries": "12/12",
       "relevance_ok_positive_queries": "12/12",
       "contains_pass": "15/16",
-      "grounded_rate": "11/12",
+      "grounded_rate": "12/12",
       "faithfulness_mean": 1.0,
       "faithfulness_n": 2,
       "answer_relevancy_mean": 1.0,
       "answer_relevancy_n": 2,
-      "contains_fail_ids": ["h015"],
-      "grounded_fail_ids": ["h016"]
+      "avg_latency_s": 26.82,
+      "avg_router_latency_s": 4.95,
+      "avg_diagnostic_retrieval_latency_s": 0.02,
+      "avg_pipeline_latency_s": 16.07,
+      "avg_llm_calls": 3.44,
+      "total_retries": 1,
+      "route_miss_ids": [],
+      "contains_fail_ids": ["h009"],
+      "grounded_fail_ids": []
     }
   },
   "interpretation": {
-    "headline": "Bounded lexical rerank improves the burned-set retrieval failures and preserves positive-query relevance on fresh2, but fresh2 still exposes three answer-coverage misses and one benign route miss.",
+    "headline": "Strong-anchor broad-pool rerank fixes the observed lexical-underfetch class on fresh2 retrieval, but fresh2 still exposes answer synthesis and one routing miss.",
     "burned_result_use": "The 16-item 2026_08 holdout is burned; its latest rerank run is regression evidence only, not fresh validation.",
-    "fresh_result_use": "Fresh2 is now the current generalization evidence. It was scored once after the bounded lexical fix and is now burned for future tuning decisions.",
-    "next_step": "Diagnose f005/f013 lexical retrieval coverage and f006 answer keyword coverage on a separate debug set, then verify on a successor fresh holdout. f014 route miss produced a good grounded answer via RAG, so it is lower priority than answer-coverage misses."
+    "fresh_result_use": "Fresh2 is now scored after the strong-anchor retrieval fix and is burned for future tuning decisions.",
+    "next_step": "Diagnose f006 and f015 answer coverage plus f014 routing/agent escalation on a separate debug set, then verify on a successor fresh holdout. f011 had retrieval_hit=true but relevance_ok=false, so the strong-anchor relevance gate may need a separate precision/sensitivity calibration if it affects product behavior."
   },
   "limitations": [
     "Single 18-item same-KB holdout run, not a multi-run statistical study.",

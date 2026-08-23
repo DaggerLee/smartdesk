@@ -24,17 +24,20 @@ harness or agent code are fixed in code, not here.
 - The two absence rows were checked by literal search for the specific absent
   topics (`Kubernetes`/`HPA`, `Rust`/`borrow checker`) across the four indexed
   note files.
-- First bounded lexical-rerank run after review fix:
-  `results/holdout_fresh2_9732d9e_20260823.jsonl`; summary:
-  `results/holdout_fresh2_20260823_summary.json`.
-  Metrics: errors `0`, router `17/18`, positive-query retrieval `13/14`,
-  positive-query relevance `14/14`, contains `15/18`, grounded `14/14`,
-  average latency `23.62s`.
-  Remaining fresh2 misses: route `f014`; contains `f005`, `f006`, `f013`.
-  This run makes fresh2 the current generalization evidence and burns it for
-  future tuning decisions. Relevance here measures positive-query sensitivity,
-  not negative-query specificity; unanswerable rows do not run diagnostic
-  retrieval in `run_eval.py`.
+- Strong-anchor rerank run after review fix:
+  `results/holdout_fresh2_7c14113_20260823.jsonl`; summary:
+  `results/holdout_fresh2_20260823_summary.json`. Burned regression artifact:
+  `results/holdout_rerank_bf105b0_20260823.jsonl`.
+  Metrics: errors `0`, router `17/18`, positive-query retrieval `14/14`,
+  positive-query relevance `13/14`, contains `15/18`, grounded `14/14`,
+  faithfulness `1.0` (`n=3`), answer relevancy `0.667` (`n=3`),
+  average latency `24.25s`, retries `1`.
+  Remaining fresh2 misses: route `f014`; relevance gate `f011`;
+  contains `f006`, `f014`, `f015`. This run makes fresh2 the current
+  generalization evidence and burns it for future tuning decisions.
+  Relevance here measures positive-query sensitivity, not negative-query
+  specificity; unanswerable rows do not run diagnostic retrieval in
+  `run_eval.py`.
 
 
 ## 2026-08-22 — fresh holdout reproduction set
