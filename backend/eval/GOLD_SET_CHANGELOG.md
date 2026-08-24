@@ -10,6 +10,41 @@ Agents may propose a gold-set or holdout label correction only when they cite th
 Existing scored artifacts remain immutable and must continue to be reported under the labels used when they were produced.
 
 
+## 2026-08-23 — successor4 preregistered holdout set
+
+- Added `holdout_set_2026_08_successor4.jsonl` as the next clean 18-item
+  successor after diagnosing successor3 failures and freezing the router-only
+  precedence rewrite at `d8728d6`. This set is reserved for a paired baseline
+  versus candidate run only; after inspection it is burned for future tuning.
+- Holdout SHA-256:
+  `31f890465038648c5fdbb87d95c8b22e4b1bdf0ceca801027c829f78e116322d`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`.
+- Coverage uses new IDs `y001`-`y018` and new phrasings: direct controls,
+  source-bound agentic/Tina/Vibe/MCP facts, source-bound technical-boundary
+  facts that should remain RAG, cross-source synthesis and parallel lookups
+  that should remain agent, and corpus-negative absence checks.
+- The two absence rows were checked by literal search across the four indexed
+  note files for `Kafka`/`consumer group`/`rebalance` and
+  `Prometheus`/`Alertmanager`/`silence`.
+- Preregistered paid-eval gate: run `config.GEMINI_MODEL =
+  "models/gemini-3.5-flash"`, `SMARTDESK_AGENT_BACKEND=langgraph`, the same
+  `kb_1` corpus, and this successor4 file against baseline `ef70ae4` and
+  candidate `d8728d6`. The run is worth doing only as a paired causal test of
+  the router precedence rewrite.
+  Route success is arithmetic and fixed before results are visible:
+  candidate route_correct must exceed baseline route_correct separately on
+  source-bound factual RAG rows (`y003`-`y013`) and corpus-negative RAG rows
+  (`y017`-`y018`). Non-regression requires candidate results to be at least
+  baseline on direct rows (`y001`-`y002`), agent-boundary rows
+  (`y014`-`y016`), positive-query retrieval, answer containment, and
+  groundedness. Do not mix in `h012` keyword changes or any additional
+  prompt/source changes before this comparison.
+
+
 ## 2026-08-23 — successor3 holdout set
 
 - Added `holdout_set_2026_08_successor3.jsonl` as the next clean 18-item
