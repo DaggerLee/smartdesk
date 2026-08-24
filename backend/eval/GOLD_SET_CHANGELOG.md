@@ -43,6 +43,16 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   (`y014`-`y016`), positive-query retrieval, answer containment, and
   groundedness. Do not mix in `h012` keyword changes or any additional
   prompt/source changes before this comparison.
+- Baseline leg run:
+  `results/holdout_successor4_baseline_ef70ae4_20260824.jsonl`. Metrics:
+  errors `0`, router `18/18`, source-bound factual route `11/11`,
+  corpus-negative route `2/2`, positive-query retrieval `14/14`,
+  positive-query relevance `14/14`, contains `14/18`, grounded `14/14`,
+  faithfulness `0.857` (`n=3`), answer relevancy `1.0` (`n=3`), LLM calls
+  `69`. Because the baseline already hit the maximum route score in both
+  preregistered targeted strata, the candidate leg cannot satisfy the required
+  positive route-delta criterion and was not run.
+
 
 
 ## 2026-08-23 — successor3 holdout set
