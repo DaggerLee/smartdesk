@@ -66,12 +66,24 @@ def test_source_bound_fact_invariant_lives_in_router_prompt(router_mock):
     query = "某份设备手册里，保修范围和免责条款分别覆盖什么？"
     assert route(query) == "rag"
     system = router_mock.call_args.kwargs["system"]
-    assert "Source-bound single-fact" in system
-    assert "same-topic technical-difference" in system
-    assert "corpus-bounded absence-check" in system
+    assert "Decision order" in system
+    assert "corpus-bounded absence or availability check" in system
+    assert "one retrieval is sufficient" in system
     assert query in system
     assert "同一个 SDK 文档里，本地缓存和远程同步的关键差异是什么？" in system
-    assert "这组项目笔记里有没有讲电子表格宏安全策略？" in system
+    assert "这几份培训笔记里有没有讲蓝牙配对故障排查？" in system
+
+
+def test_router_prompt_orders_rag_exceptions_before_agent_cues(router_mock):
+    router_mock.return_value = _resp("rag")
+
+    assert route("这几份培训笔记里有没有讲蓝牙配对故障排查？") == "rag"
+    system = router_mock.call_args.kwargs["system"]
+    absence_pos = system.index("corpus-bounded absence or availability check")
+    retrieval_pos = system.index("one retrieval is sufficient")
+    agent_pos = system.index("Route to agent only after")
+    assert absence_pos < agent_pos
+    assert retrieval_pos < agent_pos
 
 
 def test_router_prompt_does_not_embed_gold_or_holdout_queries():
