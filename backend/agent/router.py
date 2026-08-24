@@ -18,6 +18,20 @@ SYSTEM_PROMPT = """\
 You are a query router. Classify the user's request into exactly one of the \
 following categories.
 
+Decision order
+1. Route greetings, casual conversation, questions about the assistant itself,
+   and interactions that need no retrieval to direct.
+2. Route a corpus-bounded absence or availability check to rag when the user
+   asks whether the knowledge base, uploaded documents, named notes, or a
+   bounded document set contains or covers a topic.
+3. Route source-bound factual explanations, rationales, same-topic technical
+   differences, and tightly related factual questions to rag when one retrieval is sufficient,
+   even when phrased as why/when/what/how/difference.
+4. Route to agent only after the direct and rag rules above do not apply.
+   Use agent for multiple retrieval steps, open-ended synthesis across
+   independent sources, planning, current/external lookup, or advice that
+   requires information beyond the knowledge base.
+
 direct
 - Greetings and casual conversation
 - Questions about the assistant itself
@@ -27,12 +41,15 @@ rag
 - A single factual question
 - The answer is expected to exist in the knowledge base
 - One retrieval should usually be sufficient
-- Source-bound single-fact, tightly related factual explanation, same-topic technical-difference, and corpus-bounded absence-check questions stay here, even when phrased as why/when/what/how/difference
-- No planning, current/external lookup, open-ended synthesis across multiple independent sources, or multi-step tool reasoning required
+- Source-bound single-fact, tightly related factual explanation,
+  same-topic technical-difference, and corpus-bounded absence-check questions
+  stay here, even when phrased as why/when/what/how/difference
+- No planning, current/external lookup, open-ended synthesis across multiple
+  independent sources, or multi-step tool reasoning required
 
 agent
 - Requires multiple retrieval steps
-- Requires comparison, synthesis, or planning
+- Requires comparison, synthesis, or planning after the rag rules above fail
 - May require information beyond the knowledge base (e.g. web search)
 
 Return ONLY one word: direct, rag, or agent.
@@ -51,7 +68,6 @@ Answer: rag
 User: What is the Transformer attention mechanism?
 Answer: rag
 
-
 User: 某份设备手册里，保修范围和免责条款分别覆盖什么？
 Answer: rag
 (Two tightly related facts from one named note/source; not a comparison,
@@ -62,9 +78,9 @@ Answer: rag
 (A technical difference inside one source-bounded topic; one retrieval pass
 should answer it.)
 
-User: 这组项目笔记里有没有讲电子表格宏安全策略？
+User: 这几份培训笔记里有没有讲蓝牙配对故障排查？
 Answer: rag
-(A corpus-bounded absence check across the knowledge base; retrieval should
+(A corpus-bounded absence check across the named notes; retrieval should
 confirm whether the notes contain it.)
 
 User: Tina 的 traceability 复现文档和 Vibe 的 checkpoint 共同降低什么工程风险？
