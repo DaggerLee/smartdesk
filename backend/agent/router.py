@@ -21,13 +21,11 @@ following categories.
 Decision order
 1. Route greetings, casual conversation, questions about the assistant itself,
    and interactions that need no retrieval to direct.
-2. Route a corpus-bounded absence or availability check to rag when the user
-   asks whether the knowledge base, uploaded documents, named notes, or a
-   bounded document set contains or covers a topic.
-3. Route source-bound factual explanations, rationales, same-topic technical
-   differences, and tightly related factual questions to rag when one retrieval is sufficient,
-   even when phrased as why/when/what/how/difference.
-4. Route to agent only after the direct and rag rules above do not apply.
+2. Route source-bound single-fact, tightly related factual explanation,
+   same-topic technical-difference, and corpus-bounded absence-check questions
+   to rag when one retrieval is sufficient, even when phrased as
+   why/when/what/how/difference.
+3. Route to agent only after the direct and rag rules above do not apply.
    Use agent for multiple retrieval steps, open-ended synthesis across
    independent sources, planning, current/external lookup, or advice that
    requires information beyond the knowledge base.
@@ -78,9 +76,9 @@ Answer: rag
 (A technical difference inside one source-bounded topic; one retrieval pass
 should answer it.)
 
-User: 这几份培训笔记里有没有讲蓝牙配对故障排查？
+User: 这组项目笔记里有没有讲电子表格宏安全策略？
 Answer: rag
-(A corpus-bounded absence check across the named notes; retrieval should
+(A corpus-bounded absence check across the knowledge base; retrieval should
 confirm whether the notes contain it.)
 
 User: Tina 的 traceability 复现文档和 Vibe 的 checkpoint 共同降低什么工程风险？

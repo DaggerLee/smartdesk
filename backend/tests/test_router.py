@@ -60,30 +60,37 @@ def test_explicit_persist_intent_overrides_model_rag_label(router_mock):
 
     assert route("Save this as a Markdown file titled Smoke") == "agent"
 
-def test_source_bound_fact_invariant_lives_in_router_prompt(router_mock):
-    router_mock.return_value = _resp("rag")
-
+def test_source_bound_fact_invariant_lives_in_router_prompt():
     query = "某份设备手册里，保修范围和免责条款分别覆盖什么？"
-    assert route(query) == "rag"
-    system = router_mock.call_args.kwargs["system"]
-    assert "Decision order" in system
-    assert "corpus-bounded absence or availability check" in system
-    assert "one retrieval is sufficient" in system
-    assert query in system
-    assert "同一个 SDK 文档里，本地缓存和远程同步的关键差异是什么？" in system
-    assert "这几份培训笔记里有没有讲蓝牙配对故障排查？" in system
+    assert "Decision order" in SYSTEM_PROMPT
+    assert "Source-bound single-fact" in SYSTEM_PROMPT
+    assert "same-topic technical-difference" in SYSTEM_PROMPT
+    assert "corpus-bounded absence-check" in SYSTEM_PROMPT
+    assert "one retrieval is sufficient" in SYSTEM_PROMPT
+    assert query in SYSTEM_PROMPT
+    assert "同一个 SDK 文档里，本地缓存和远程同步的关键差异是什么？" in SYSTEM_PROMPT
+    assert "这组项目笔记里有没有讲电子表格宏安全策略？" in SYSTEM_PROMPT
 
 
-def test_router_prompt_orders_rag_exceptions_before_agent_cues(router_mock):
-    router_mock.return_value = _resp("rag")
-
-    assert route("这几份培训笔记里有没有讲蓝牙配对故障排查？") == "rag"
-    system = router_mock.call_args.kwargs["system"]
-    absence_pos = system.index("corpus-bounded absence or availability check")
-    retrieval_pos = system.index("one retrieval is sufficient")
-    agent_pos = system.index("Route to agent only after")
+def test_router_prompt_orders_rag_exceptions_before_agent_cues():
+    absence_pos = SYSTEM_PROMPT.index("corpus-bounded absence-check")
+    retrieval_pos = SYSTEM_PROMPT.index("one retrieval is sufficient")
+    agent_pos = SYSTEM_PROMPT.index("Route to agent only after")
     assert absence_pos < agent_pos
     assert retrieval_pos < agent_pos
+
+
+def test_router_prompt_omits_diagnosed_holdout_topic_terms():
+    forbidden_terms = [
+        "Code Execution Tool",
+        "PostgreSQL",
+        "transaction isolation",
+        "CSS Grid",
+        "subgrid",
+        "蓝牙",
+    ]
+    leaked_terms = [term for term in forbidden_terms if term in SYSTEM_PROMPT]
+    assert leaked_terms == []
 
 
 def test_router_prompt_does_not_embed_gold_or_holdout_queries():
