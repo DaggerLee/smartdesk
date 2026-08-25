@@ -52,6 +52,22 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   `69`. Because the baseline already hit the maximum route score in both
   preregistered targeted strata, the candidate leg cannot satisfy the required
   positive route-delta criterion and was not run.
+- Post-baseline answer-quality diagnosis: `y015` exposed agent groundedness
+  revision leakage, where the revision answer mentioned prior unsupported
+  wording instead of returning only the user-facing revised answer; the
+  revision-prompt mechanism was fixed in `737a215`, with no paid eval rerun.
+  `y003` remains a runtime synthesis-undercoverage observation because
+  retrieval contained every expected fact but the answer omitted the source
+  definition contrast (`多步骤` / `一次性生成`). `y011` is a matcher
+  strictness candidate, not a runtime failure: the answer correctly explained
+  the self-check mechanism from `63` and `mini-eval`, while the matcher also
+  required unrelated template fields (`HTML table`, `fetch`, image usage) that
+  the query did not ask for. `y016` is also a matcher strictness candidate:
+  the answer used equivalent wording (`重新撰写提示词`, `更清晰的约束`) for the
+  recovery-step row, but the matcher only accepted `重写 prompt|更明确`.
+  No successor4 labels or matchers were changed; any correction still requires
+  explicit user approval under the governance rule above.
+
 
 
 
