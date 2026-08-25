@@ -92,7 +92,10 @@ _GROUNDEDNESS_REVISION_PREFIX = (
 )
 _GROUNDEDNESS_REVISION_SUFFIX = (
     "\n\nRevise the answer to remove or correct these claims, or explicitly state that "
-    "the information was not found in the evidence. Do not call any tools."
+    "the information was not found in the evidence. Do not call any tools. "
+    "Return only the revised answer to the user's original question. "
+    "Do not apologize. Do not mention the previous answer, the revision process, "
+    "the unsupported sentence list, or the grounding audit."
 )
 
 # Appended to the last user-role message parts when max_turns is hit so the
