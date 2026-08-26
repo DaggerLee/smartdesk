@@ -17,7 +17,7 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   precedence rewrite at `d8728d6`. This set is reserved for a paired baseline
   versus candidate run only; after inspection it is burned for future tuning.
 - Holdout SHA-256:
-  `31f890465038648c5fdbb87d95c8b22e4b1bdf0ceca801027c829f78e116322d`.
+  `219bf52d2096a10c16a26619e51c30082d9c4dc470dfbb5170ddb320dcb67663`.
 - The set stays on the current `kb_1` corpus owner: the four files loaded by
   `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
   `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
@@ -65,8 +65,11 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   the query did not ask for. `y016` is also a matcher strictness candidate:
   the answer used equivalent wording (`重新撰写提示词`, `更清晰的约束`) for the
   recovery-step row, but the matcher only accepted `重写 prompt|更明确`.
-  No successor4 labels or matchers were changed; any correction still requires
-  explicit user approval under the governance rule above.
+  User approved correcting `y011` and `y016` matchers in-session. `y011` now
+  scores the self-check mechanism the query asks for (`63`, `mini-eval`, and
+  objective verification wording) instead of unrelated template fields. `y016`
+  now accepts the observed equivalent recovery-step wording
+  (`重新撰写提示词`, `更清晰的约束`). `y003` and `y015` remain unchanged.
 
 
 
