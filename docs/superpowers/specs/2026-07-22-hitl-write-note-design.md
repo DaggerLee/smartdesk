@@ -471,8 +471,8 @@ before emitting:
 {"confirmation_required":{...}}
 ```
 
-The request then ends with `[PAUSED]`. Proposal/checkpoint failure emits a
-typed error with `stage="proposal"`, then `[FAILED]`, and creates no
+The request then ends with `[PAUSED]`. Initial graph/checkpoint failure emits
+a typed error with `stage="graph"`, then `[FAILED]`, and creates no
 Conversation.
 
 ### Action result
