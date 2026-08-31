@@ -96,12 +96,17 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   2`, verification status `verified 2`, faithfulness `0.4` (`n=2`;
   `y014=0.5`, `y015=0.3`), answer relevancy `1.0` (`n=2`), LLM calls `16`,
   retries `1`, retry sleep `5.0s`. Replay classification: valid pass with a
-  presentation caveat. Both answers removed the previous revision/apology/audit
-  meta-language leak and were delivered from the verified graph answer. `y014`
-  directly answered with the requested causal chain. `y015` covered the
-  component-to-E2E argument and included Tina's eval quote, but appended a short
-  explanatory postscript after the quote, so this run should not be cited as
-  literal quote-as-final-word polish.
+  presentation caveat and a scope caveat. This run enabled
+  `SMARTDESK_VERIFIED_AGENT_DELIVERY=1`, while the `ef70ae4` successor4
+  baseline scored internal/eval-simplified answers with verified delivery off;
+  therefore its `contains 2/2` must not be used as a direct baseline-to-replay
+  attribution for `737a215` alone. The valid claim is narrower: under the
+  current production-delivery scope, both verified graph answers contain no
+  revision/apology/prior-answer/grounding-audit meta-language. `y014` directly
+  answered with the requested causal chain. `y015` covered the component-to-E2E
+  argument and included Tina's eval quote, but appended a short explanatory
+  postscript after the quote, so this run should not be cited as literal
+  quote-as-final-word polish.
 
 
 
