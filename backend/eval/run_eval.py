@@ -615,7 +615,7 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     for r in results:
         rt  = "✓" if r.route_correct else "✗"
         ret = ("✓" if r.retrieval_hit else "✗") if r.retrieval_hit is not None else " -"
-        con = "✓" if r.contains_pass else "✗"
+        con = " -" if r.error else ("✓" if r.contains_pass else "✗")
         gnd = ("✓" if r.grounded else "✗") if r.grounded is not None else " -"
         fth = f"{r.faithfulness:.2f}" if r.faithfulness is not None else "  -  "
         rel = f"{r.answer_relevancy:.2f}" if r.answer_relevancy is not None else "  -  "

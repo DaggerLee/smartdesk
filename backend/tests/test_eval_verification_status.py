@@ -94,6 +94,29 @@ def test_report_prints_canonical_embedding_model(capsys):
     assert "relevance_ok expected ~0%" not in output
 
 
+def test_report_marks_error_contains_as_not_applicable(capsys):
+    passed = _item("pass", None)
+    passed.contains_pass = True
+    missed = _item("miss", None)
+    missed.contains_pass = False
+    errored = _item("error", None)
+    errored.contains_pass = False
+    errored.error = "provider unavailable"
+
+    results = [passed, missed, errored]
+    run_eval.print_report(run_eval.aggregate(results), results)
+
+    rows = {
+        line.split()[0]: line.split()
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith(("pass", "miss", "error"))
+    }
+    assert rows["pass"][7] == "✓"
+    assert rows["miss"][7] == "✗"
+    assert rows["error"][7] == "-"
+    assert rows["error"][-1] == "ERR"
+
+
 def test_history_archive_preserves_status_distribution(tmp_path):
     aggregate = run_eval.aggregate([
         _item("a1", "not_applicable"),
