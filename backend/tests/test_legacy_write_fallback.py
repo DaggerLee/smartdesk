@@ -95,7 +95,7 @@ def test_backend_and_hitl_flag_matrix_preserves_only_emergency_fallback(
         ),
         patch("routers.chat._owned_kb"),
         patch("routers.chat.route", route_mock),
-        patch("routers.chat._stream_graph_with_proposal_failure", graph_mock),
+        patch("routers.chat._stream_graph_with_initial_failure", graph_mock),
         patch("routers.chat.llm_stream", return_value=iter(["legacy answer"])),
         patch(
             "routers.chat.StreamingResponse",

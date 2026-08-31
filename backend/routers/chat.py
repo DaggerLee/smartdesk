@@ -64,13 +64,13 @@ class HistoryItem(BaseModel):
 def _sse_json(payload) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-def _stream_graph_with_proposal_failure(*args, **kwargs):
+def _stream_graph_with_initial_failure(*args, **kwargs):
     try:
         yield from stream_graph(*args, **kwargs)
     except Exception:
         query = args[0]
         if is_hitl_write_note_enabled() and classify_write_intent(query) == "persist":
-            yield GraphEvent(type="proposal_failed", data={})
+            yield GraphEvent(type="graph_failed", data={})
             return
         raise
 
@@ -383,7 +383,7 @@ def chat_stream(
                 print(f"[Chat] LangGraph thread_id={thread_id}")
                 recent_history = _recent_usable_history(db, body.kb_id)
                 final_state: dict = {}
-                for event in _stream_graph_with_proposal_failure(
+                for event in _stream_graph_with_initial_failure(
                     body.message,
                     body.kb_id,
                     history=list(reversed(recent_history)),
@@ -402,8 +402,8 @@ def chat_stream(
                         )
                         yield "data: [PAUSED]\n\n"
                         return
-                    elif event.type == "proposal_failed":
-                        yield _sse_json({"error": {"stage": "proposal"}})
+                    elif event.type == "graph_failed":
+                        yield _sse_json({"error": {"stage": "graph"}})
                         yield "data: [FAILED]\n\n"
                         return
                     elif event.type == "final":
