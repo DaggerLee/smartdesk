@@ -70,6 +70,18 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   objective verification wording) instead of unrelated template fields. `y016`
   now accepts the observed equivalent recovery-step wording
   (`重新撰写提示词`, `更清晰的约束`). `y003` and `y015` remain unchanged.
+- Targeted post-fix replay attempt:
+  `results/holdout_successor4_revision_replay_b51cd17_20260826.jsonl`.
+  Actual run time was 2026-08-31 despite the legacy run-id suffix. Scope was
+  limited to `y014` and `y015` under `models/gemini-3.5-flash`,
+  `SMARTDESK_AGENT_BACKEND=langgraph`, and `kb_1`. The replay is
+  external-service-invalid, not evidence of answer quality: both rows routed
+  correctly (`2/2`) and retrieval hit (`2/2`), but both answer generations
+  ended in terminal Gemini `503 Server Error` after repeated `ReadTimeout`/503
+  retries. Totals: LLM calls `13`, retries `10`, retry sleep `190.0s`.
+  Exclude its `contains 0/2` from quality comparisons because no answers were
+  produced.
+
 
 
 
