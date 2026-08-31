@@ -51,6 +51,37 @@ def test_aggregate_records_verification_status_distribution():
         "verified": 2,
     }
 
+def test_aggregate_excludes_errors_from_contains_denominator():
+    passed = _item("pass", None)
+    passed.contains_pass = True
+    failed = _item("fail", None)
+    failed.contains_pass = False
+    errored = _item("error", None)
+    errored.contains_pass = False
+    errored.error = "provider unavailable"
+    errored.retrieval_hit = True
+    errored.relevance_ok = True
+
+    aggregate = run_eval.aggregate([passed, failed, errored])
+
+    assert aggregate["e2e_contains_pass"] == "1/2 = 50.0%"
+    assert aggregate["retrieval_recall_k"] == "1/1 = 100.0%"
+    assert aggregate["relevance_ok_rate"] == "1/1 = 100.0%"
+    assert aggregate["total"] == 3
+    assert aggregate["errors"] == 1
+
+
+def test_aggregate_contains_is_not_applicable_when_all_rows_error():
+    errored = _item("error", None)
+    errored.contains_pass = False
+    errored.error = "provider unavailable"
+
+    aggregate = run_eval.aggregate([errored])
+
+    assert aggregate["e2e_contains_pass"] == "N/A"
+    assert aggregate["total"] == 1
+    assert aggregate["errors"] == 1
+
 
 def test_report_prints_canonical_embedding_model(capsys):
     aggregate = run_eval.aggregate([_item("a1", "verified")])

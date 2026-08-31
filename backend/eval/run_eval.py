@@ -529,6 +529,7 @@ def aggregate(results: list[ItemResult]) -> dict:
     clean = [r for r in results if not r.is_boundary]
     retrieval_eligible = [r for r in results if r.retrieval_hit is not None]
     grounded_eligible = [r for r in results if r.grounded is not None]
+    contains_eligible = [r for r in results if not r.error]
     faith_vals = [r.faithfulness for r in results if r.faithfulness is not None]
     relev_vals = [r.answer_relevancy for r in results if r.answer_relevancy is not None]
     source_checked = [r for r in results if r.source_disclosed is not None]
@@ -550,7 +551,7 @@ def aggregate(results: list[ItemResult]) -> dict:
         "boundary_excluded":       total - len(clean),
         "retrieval_recall_k":      _pct(sum(1 for r in retrieval_eligible if r.retrieval_hit), len(retrieval_eligible)),
         "relevance_ok_rate":       _pct(sum(1 for r in retrieval_eligible if r.relevance_ok), len(retrieval_eligible)),
-        "e2e_contains_pass":       _pct(sum(1 for r in results if r.contains_pass), total),
+        "e2e_contains_pass":       _pct(sum(1 for r in contains_eligible if r.contains_pass), len(contains_eligible)),
         "grounded_rate":           _pct(sum(1 for r in grounded_eligible if r.grounded), len(grounded_eligible)),
         "faithfulness_mean":       _mean(faith_vals),
         "answer_relevancy_mean":   _mean(relev_vals),
