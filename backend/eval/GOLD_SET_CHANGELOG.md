@@ -52,6 +52,20 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   `69`. Because the baseline already hit the maximum route score in both
   preregistered targeted strata, the candidate leg cannot satisfy the required
   positive route-delta criterion and was not run.
+- Current-router route-only leg:
+  `results/holdout_successor4_router_candidate_a3148c5_20260831.jsonl`.
+  Run from clean HEAD `a3148c5`; `agent/router.py` includes the `d8728d6`
+  router precedence rewrite. Scope was router classification only on the same
+  successor4 set and `models/gemini-3.5-flash`; no retrieval, answer
+  generation, grounding, judge calls, candidate full eval, gold, matcher,
+  corpus, prompt, or scoring changes. Result SHA-256:
+  `a8d6d8fcd970e74d6e434cf2ad7f15d153b5831da59265004ec70e9c2c2d5318`.
+  Metrics: errors `0`, router `18/18`, direct `2/2`, source-bound factual RAG
+  `11/11`, agent-boundary `3/3`, corpus-negative RAG `2/2`, logical router
+  calls `18`, retries `4`, retry sleep `65.0s`. This is held-out
+  generalization and non-regression evidence for the shipped router. It does
+  not establish causal improvement over `ef70ae4` because the baseline was
+  already at route ceiling.
 - Post-baseline answer-quality diagnosis: `y015` exposed agent groundedness
   revision leakage, where the revision answer mentioned prior unsupported
   wording instead of returning only the user-facing revised answer; the
