@@ -81,6 +81,28 @@ Existing scored artifacts remain immutable and must continue to be reported unde
   retries. Totals: LLM calls `13`, retries `10`, retry sleep `190.0s`.
   Exclude its `contains 0/2` from quality comparisons because no answers were
   produced.
+- Targeted post-fix replay:
+  `results/holdout_successor4_revision_replay_dd68f01_20260831.jsonl`.
+  Run id `successor4_revision_replay_dd68f01_20260831`, subset SHA-256
+  `dc56d181b7a4f56f14ef55ab8bacab6b3168aa3b623d311029ad8098971f350d`,
+  result SHA-256
+  `03b634475ffc587675e97202a93d9a9728f15b694d7221f949471a78571d3338`.
+  Scope was limited to `y014` and `y015` under `models/gemini-3.5-flash`,
+  `SMARTDESK_AGENT_BACKEND=langgraph`,
+  `SMARTDESK_VERIFIED_AGENT_DELIVERY=1`, and `kb_1`; no candidate/router leg,
+  gold, matcher, corpus, prompt, or scoring changes. Metrics: errors `0`,
+  router `2/2`, retrieval `2/2`, relevance `2/2`, contains `2/2`, grounded
+  `2/2`, answer scope `production_delivered 2`, delivery kind `graph_answer
+  2`, verification status `verified 2`, faithfulness `0.4` (`n=2`;
+  `y014=0.5`, `y015=0.3`), answer relevancy `1.0` (`n=2`), LLM calls `16`,
+  retries `1`, retry sleep `5.0s`. Replay classification: valid pass with a
+  presentation caveat. Both answers removed the previous revision/apology/audit
+  meta-language leak and were delivered from the verified graph answer. `y014`
+  directly answered with the requested causal chain. `y015` covered the
+  component-to-E2E argument and included Tina's eval quote, but appended a short
+  explanatory postscript after the quote, so this run should not be cited as
+  literal quote-as-final-word polish.
+
 
 
 
