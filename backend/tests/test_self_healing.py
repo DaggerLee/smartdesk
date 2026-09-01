@@ -164,6 +164,11 @@ def test_groundedness_revises_on_fail(mock_groundedness_fail_then_ok):
     assert finals[0].data["text"] == "Revised answer, properly grounded."
     assert finals[0].data["grounded"] is True   # second judge call returned ok
     assert loop_complete.call_count == 3          # retrieve + original + revision
+    revision_messages = loop_complete.call_args_list[-1].args[0]
+    revision_text = revision_messages[-1]["parts"][0]["text"]
+    assert "Return only the revised answer" in revision_text
+    assert "Do not apologize" in revision_text
+    assert "Do not mention" in revision_text
 
 
 def test_groundedness_pass(mock_groundedness_ok):

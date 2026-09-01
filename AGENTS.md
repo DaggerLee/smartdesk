@@ -9,6 +9,12 @@ SmartDesk is an enterprise knowledge assistant: a FastAPI + ChromaDB + Gemini
 RAG backend with an agentic answer path, SSE streaming, JWT auth, and a Vue 3
 frontend.
 
+### Canonical checkout
+
+On this workstation, the canonical SmartDesk checkout is `/home/dagger306/projects/smartdesk`. `/mnt/c/Users/Dagger/smartdesk` is stale and non-canonical.
+Use `/home/dagger306/projects/smartdesk` as the absolute working directory for every repository read, command, edit, and commit; never select a SmartDesk checkout from the session working directory.
+
+
 - `README.md` is the entry point for setup, architecture, and product
   description.
 - `docs/PROJECT_EVIDENCE.md` owns publicly verified outcomes.
@@ -22,6 +28,7 @@ frontend.
 - Do not modify, delete, or stage `backend/eval/results/*` (including
   `backend/eval/results/history.jsonl`) unless the task explicitly
   authorizes it. These are user-owned evaluation artifacts.
+- Evaluation-set label governance is owned by `backend/eval/GOLD_SET_CHANGELOG.md`; read it before proposing or applying a gold-set or holdout label change.
 
 ## Engineering rules
 

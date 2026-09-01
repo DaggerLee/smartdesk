@@ -33,6 +33,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -87,7 +88,7 @@ from llm.trace import context as _trace_context
 from agent.loop import run_agent
 from agent.router import route as _router_route
 from agent.tools.retrieve import RetrieveTool
-from llm.client import complete
+from llm.client import collect_stats, complete
 
 _run_graph = None
 if _AGENT_BACKEND == "langgraph":
@@ -144,6 +145,7 @@ _RELEV_SYSTEM = (
 )
 _RAG_PROMPT_TMPL = (
     "Use the following knowledge base excerpts to answer the question.\n"
+    "Cover every requested subpoint that is supported by the excerpts; for why questions, include causal evidence before the final conclusion, and mention diagnostic methods or root-cause chains only when the excerpts explicitly provide them.\n"
     "If the excerpts do not contain relevant information, say so clearly.\n\n"
     "Knowledge base:\n{context}\n\n"
     "Question: {query}"
@@ -183,20 +185,41 @@ class ItemResult:
     # that it came from web search rather than the KB.
     source_disclosed: Optional[bool] = None
 
+    router_latency_s: float = 0.0
+    diagnostic_retrieval_latency_s: float = 0.0
+    pipeline_latency_s: float = 0.0
+    posthoc_groundedness_latency_s: float = 0.0
+    judge_latency_s: float = 0.0
+    llm_call_count: int = 0
+    llm_retry_count: int = 0
+    llm_retry_sleep_s: float = 0.0
+
     latency_s: float = 0.0
     error: Optional[str] = None
 
 
 # ── Gold set loader ────────────────────────────────────────────────────────────
 
-def _load_gold(limit: Optional[int] = None) -> list[dict]:
+def _load_gold(limit: Optional[int] = None, gold_path: Path = GOLD_PATH) -> list[dict]:
     items = []
-    with open(GOLD_PATH) as f:
+    with open(gold_path) as f:
         for line in f:
             line = line.strip()
             if line:
                 items.append(json.loads(line))
     return items[:limit] if limit else items
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return left.resolve() == right.resolve()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 # ── LLM judge helpers ──────────────────────────────────────────────────────────
@@ -350,7 +373,7 @@ def eval_item(item: dict) -> ItemResult:
 
 
 def _eval_item(item: dict) -> ItemResult:
-    t0 = time.time()
+    t0 = time.perf_counter()
     is_boundary = (
         item.get("category") == "boundary"
         or "边界" in item.get("notes", "")
@@ -367,102 +390,127 @@ def _eval_item(item: dict) -> ItemResult:
         is_boundary=is_boundary,
     )
 
-    try:
-        actual_route = _router_route(item["query"])
-        result.actual_route = actual_route
-        result.route_correct = actual_route == item["expected_route"]
+    with collect_stats() as llm_stats:
+        try:
+            stage_t = time.perf_counter()
+            try:
+                actual_route = _router_route(item["query"])
+            finally:
+                result.router_latency_s = round(time.perf_counter() - stage_t, 2)
+            result.actual_route = actual_route
+            result.route_correct = actual_route == item["expected_route"]
 
-        keywords = item.get("expected_answer_contains", [])
-        min_hits = item.get("min_hits", 1)
+            keywords = item.get("expected_answer_contains", [])
+            min_hits = item.get("min_hits", 1)
 
-        # Layer 2 — retrieval recall@k (independent of pipeline runner)
-        retrieved_chunks: list[str] = []
-        do_retrieval = (
-            item["expected_route"] in ("rag", "agent")
-            and item["category"] != "unanswerable"
-        )
-        if do_retrieval:
-            r = RetrieveTool(kb_id=item["kb_id"]).run(query=item["query"])
-            retrieved_chunks = r.get("chunks", [])
-            result.relevance_ok = r.get("relevance_ok", False)
-            chunks_norm = _normalize(" ".join(retrieved_chunks))
-            kw_hits = sum(1 for kw in keywords if _keyword_hit(kw, chunks_norm))
-            result.retrieval_keyword_hits = kw_hits
-            result.retrieval_hit = kw_hits >= 1
-
-        # Layer 3a — generate answer via actual route
-        answer = ""
-        answer_scope = "unassigned"
-        delivery_kind: Optional[str] = None
-        grounded: Optional[bool] = None
-        verification_status: Optional[str] = None
-
-        if actual_route == "direct":
-            answer = _run_direct(item["query"])
-            answer_scope = "eval_simplified"
-        elif actual_route == "rag":
-            answer = _run_rag(item["query"], retrieved_chunks)
-            answer_scope = "eval_simplified"
-        else:  # agent
-            answer, agent_chunks, grounded, verification_status = _run_agent_path(
-                item["query"], item["kb_id"]
+            # Layer 2 — retrieval recall@k (independent of pipeline runner)
+            retrieved_chunks: list[str] = []
+            do_retrieval = (
+                item["expected_route"] in ("rag", "agent")
+                and item["category"] != "unanswerable"
             )
-            if agent_chunks:
-                retrieved_chunks = agent_chunks
-            if _AGENT_BACKEND == "langgraph" and is_verified_delivery_enabled():
-                decision = select_delivery(answer, verification_status)
-                answer = decision.payload
-                answer_scope = "production_delivered"
-                delivery_kind = decision.kind
-            else:
-                answer_scope = "agent_internal"
+            if do_retrieval:
+                stage_t = time.perf_counter()
+                try:
+                    r = RetrieveTool(kb_id=item["kb_id"]).run(query=item["query"])
+                finally:
+                    result.diagnostic_retrieval_latency_s = round(time.perf_counter() - stage_t, 2)
+                retrieved_chunks = r.get("chunks", [])
+                result.relevance_ok = r.get("relevance_ok", False)
+                chunks_norm = _normalize(" ".join(retrieved_chunks))
+                kw_hits = sum(1 for kw in keywords if _keyword_hit(kw, chunks_norm))
+                result.retrieval_keyword_hits = kw_hits
+                result.retrieval_hit = kw_hits >= 1
 
-        result.answer = answer
-        result.answer_scope = answer_scope
-        result.delivery_kind = delivery_kind
-        result.verification_status = verification_status
+            # Layer 3a — generate answer via actual route
+            answer = ""
+            answer_scope = "unassigned"
+            delivery_kind: Optional[str] = None
+            grounded: Optional[bool] = None
+            verification_status: Optional[str] = None
 
-        if not answer.strip():
-            # No exception was raised, but the model produced no visible text
-            # (observed on gemini-3.5-flash: the max_turns wrap-up call can
-            # return content with empty/absent parts if the thinking budget
-            # is exhausted before the visible answer is emitted). Silently
-            # scoring this as contains_pass=False / grounded=None would
-            # under-report it as a normal miss rather than a failed call, and
-            # it would never get retried on resume. Treat it as an error so
-            # it's excluded from scoring and picked up again on resume.
-            raise RuntimeError(
-                "empty_answer: model returned no text (no exception raised)"
-            )
+            stage_t = time.perf_counter()
+            try:
+                if actual_route == "direct":
+                    answer = _run_direct(item["query"])
+                    answer_scope = "eval_simplified"
+                elif actual_route == "rag":
+                    answer = _run_rag(item["query"], retrieved_chunks)
+                    answer_scope = "eval_simplified"
+                else:  # agent
+                    answer, agent_chunks, grounded, verification_status = _run_agent_path(
+                        item["query"], item["kb_id"]
+                    )
+                    if agent_chunks:
+                        retrieved_chunks = agent_chunks
+                    if _AGENT_BACKEND == "langgraph" and is_verified_delivery_enabled():
+                        decision = select_delivery(answer, verification_status)
+                        answer = decision.payload
+                        answer_scope = "production_delivered"
+                        delivery_kind = decision.kind
+                    else:
+                        answer_scope = "agent_internal"
+            finally:
+                result.pipeline_latency_s = round(time.perf_counter() - stage_t, 2)
 
-        # Layer 3b — contains check
-        answer_norm = _normalize(answer)
-        hits = sum(1 for kw in keywords if _keyword_hit(kw, answer_norm))
-        result.contains_hits = hits
-        result.contains_pass = hits >= min_hits
+            result.answer = answer
+            result.answer_scope = answer_scope
+            result.delivery_kind = delivery_kind
+            result.verification_status = verification_status
 
-        # Layer 3b.2 — unanswerable-category source disclosure (only when the
-        # model gave substantive content instead of an honest refusal).
-        if item["category"] == "unanswerable" and not result.contains_pass and answer:
-            result.source_disclosed = _has_source_disclosure(answer)
+            if not answer.strip():
+                # No exception was raised, but the model produced no visible text
+                # (observed on gemini-3.5-flash: the max_turns wrap-up call can
+                # return content with empty/absent parts if the thinking budget
+                # is exhausted before the visible answer is emitted). Silently
+                # scoring this as contains_pass=False / grounded=None would
+                # under-report it as a normal miss rather than a failed call, and
+                # it would never get retried on resume. Treat it as an error so
+                # it's excluded from scoring and picked up again on resume.
+                raise RuntimeError(
+                    "empty_answer: model returned no text (no exception raised)"
+                )
 
-        # Layer 3c — groundedness
-        if item.get("grounding_required", False) and answer:
-            if grounded is None:
-                evidence = [{"text": c, "source": "retrieved"} for c in retrieved_chunks]
-                g = _groundedness_check(answer, evidence)
-                grounded = g.get("supported", True)
-            result.grounded = grounded
+            # Layer 3b — contains check
+            answer_norm = _normalize(answer)
+            hits = sum(1 for kw in keywords if _keyword_hit(kw, answer_norm))
+            result.contains_hits = hits
+            result.contains_pass = hits >= min_hits
 
-        # Layer 3d — RAGAS-inspired (agent-expected only, per spec)
-        if item["expected_route"] == "agent" and answer:
-            result.faithfulness = _faithfulness(answer, retrieved_chunks)
-            result.answer_relevancy = _answer_relevancy(item["query"], answer)
+            # Layer 3b.2 — unanswerable-category source disclosure (only when the
+            # model gave substantive content instead of an honest refusal).
+            if item["category"] == "unanswerable" and not result.contains_pass and answer:
+                result.source_disclosed = _has_source_disclosure(answer)
 
-    except Exception as exc:
-        result.error = str(exc)
+            # Layer 3c — groundedness
+            if item.get("grounding_required", False) and answer:
+                stage_t = time.perf_counter()
+                try:
+                    if grounded is None:
+                        evidence = [{"text": c, "source": "retrieved"} for c in retrieved_chunks]
+                        g = _groundedness_check(answer, evidence)
+                        grounded = g.get("supported", True)
+                    result.grounded = grounded
+                finally:
+                    result.posthoc_groundedness_latency_s = round(time.perf_counter() - stage_t, 2)
 
-    result.latency_s = round(time.time() - t0, 2)
+            # Layer 3d — RAGAS-inspired (agent-expected only, per spec)
+            if item["expected_route"] == "agent" and answer:
+                stage_t = time.perf_counter()
+                try:
+                    result.faithfulness = _faithfulness(answer, retrieved_chunks)
+                    result.answer_relevancy = _answer_relevancy(item["query"], answer)
+                finally:
+                    result.judge_latency_s = round(time.perf_counter() - stage_t, 2)
+
+        except Exception as exc:
+            result.error = str(exc)
+        finally:
+            result.llm_call_count = int(llm_stats["llm_call_count"])
+            result.llm_retry_count = int(llm_stats["llm_retry_count"])
+            result.llm_retry_sleep_s = round(llm_stats["llm_retry_sleep_s"], 2)
+
+    result.latency_s = round(time.perf_counter() - t0, 2)
     return result
 
 
@@ -481,6 +529,7 @@ def aggregate(results: list[ItemResult]) -> dict:
     clean = [r for r in results if not r.is_boundary]
     retrieval_eligible = [r for r in results if r.retrieval_hit is not None]
     grounded_eligible = [r for r in results if r.grounded is not None]
+    contains_eligible = [r for r in results if not r.error]
     faith_vals = [r.faithfulness for r in results if r.faithfulness is not None]
     relev_vals = [r.answer_relevancy for r in results if r.answer_relevancy is not None]
     source_checked = [r for r in results if r.source_disclosed is not None]
@@ -502,7 +551,7 @@ def aggregate(results: list[ItemResult]) -> dict:
         "boundary_excluded":       total - len(clean),
         "retrieval_recall_k":      _pct(sum(1 for r in retrieval_eligible if r.retrieval_hit), len(retrieval_eligible)),
         "relevance_ok_rate":       _pct(sum(1 for r in retrieval_eligible if r.relevance_ok), len(retrieval_eligible)),
-        "e2e_contains_pass":       _pct(sum(1 for r in results if r.contains_pass), total),
+        "e2e_contains_pass":       _pct(sum(1 for r in contains_eligible if r.contains_pass), len(contains_eligible)),
         "grounded_rate":           _pct(sum(1 for r in grounded_eligible if r.grounded), len(grounded_eligible)),
         "faithfulness_mean":       _mean(faith_vals),
         "answer_relevancy_mean":   _mean(relev_vals),
@@ -533,8 +582,8 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M")
     w = 66
     print(f"\n{'='*w}")
-    print(f"  SmartDesk v2 Baseline Eval  —  {run_at}")
-    print(f"  embedding: all-MiniLM-L6-v2  (before multilingual swap)")
+    print(f"  SmartDesk v2 Eval  —  {run_at}")
+    print(f"  embedding: {config.EMBEDDING_MODEL}")
     print(f"{'='*w}")
 
     print(f"\n[Layer 1] Router Accuracy")
@@ -545,7 +594,6 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     print(f"\n[Layer 2] Retrieval Recall@{TOP_K}")
     print(f"  keyword hit rate:   {agg['retrieval_recall_k']}")
     print(f"  relevance_ok rate:  {agg['relevance_ok_rate']}")
-    print(f"  [relevance_ok expected ~0%: Chinese text vs English MiniLM]")
 
     print(f"\n[Layer 3] E2E Answer Quality")
     print(f"  contains_pass:      {agg['e2e_contains_pass']}")
@@ -567,7 +615,7 @@ def print_report(agg: dict, results: list[ItemResult]) -> None:
     for r in results:
         rt  = "✓" if r.route_correct else "✗"
         ret = ("✓" if r.retrieval_hit else "✗") if r.retrieval_hit is not None else " -"
-        con = "✓" if r.contains_pass else "✗"
+        con = " -" if r.error else ("✓" if r.contains_pass else "✗")
         gnd = ("✓" if r.grounded else "✗") if r.grounded is not None else " -"
         fth = f"{r.faithfulness:.2f}" if r.faithfulness is not None else "  -  "
         rel = f"{r.answer_relevancy:.2f}" if r.answer_relevancy is not None else "  -  "
@@ -646,16 +694,26 @@ def _git_dirty() -> bool:
         return True
 
 
-def append_history(agg: dict, n_items: int, limit: Optional[int], git_dirty: bool) -> None:
+def append_history(
+    agg: dict,
+    n_items: int,
+    limit: Optional[int],
+    git_dirty: bool,
+    gold_path: Path = GOLD_PATH,
+    gold_sha256: Optional[str] = None,
+) -> None:
     """Append one aggregate record per eval run — the before/after comparison
     data source (Decisions §3: archive every run, keep the file in git)."""
     record = {
         "run_at": datetime.now().isoformat(timespec="seconds"),
         "git_commit": _git_commit(),
         "model": config.GEMINI_MODEL,
+        "embedding_model": config.EMBEDDING_MODEL,
         "gold_set_items": n_items,
         "limit": limit,
         "eval_key_used": bool(_eval_key),
+        "gold_set_path": str(gold_path),
+        "gold_set_sha256": gold_sha256 or _file_sha256(gold_path),
         "agent_backend": _AGENT_BACKEND,
         **agg,
     }
@@ -680,11 +738,18 @@ def main() -> None:
     parser.add_argument("--run-id", default=None,
                         help="Resume ID; defaults to <date>_<commit>. Items already "
                              "in partial_<run_id>.jsonl are skipped on restart.")
+    parser.add_argument("--gold-path", type=Path, default=GOLD_PATH,
+                        help="JSONL gold/holdout set path; defaults to eval/gold_set.jsonl")
     parser.add_argument("--allow-dirty", action="store_true",
                         help="Run even with uncommitted changes in the working tree. "
                              "The archived history.jsonl record is forced to include "
                              "\"git_dirty\": true so the mismatch is never silent.")
     args = parser.parse_args()
+    if not _same_path(args.gold_path, GOLD_PATH) and _same_path(Path(args.out), DEFAULT_OUT):
+        sys.exit(
+            "[run_eval] --gold-path uses a non-default eval set, so --out must "
+            "be explicit to avoid overwriting or mislabeling baseline results."
+        )
 
     dirty = _git_dirty()
     if dirty and not args.allow_dirty:
@@ -702,7 +767,8 @@ def main() -> None:
 
 
 def _run(args: argparse.Namespace, git_dirty: bool) -> None:
-    items = _load_gold(args.limit)
+    items = _load_gold(args.limit, gold_path=args.gold_path)
+    gold_sha256 = _file_sha256(args.gold_path)
     print(f"Evaluating {len(items)} items …", flush=True)
 
     # Checkpoint file: one line per completed item, written immediately, so a
@@ -754,8 +820,14 @@ def _run(args: argparse.Namespace, git_dirty: bool) -> None:
         for r in results:
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
     print(f"\nDetailed results → {out_path}")
-
-    append_history(agg, n_items=len(items), limit=args.limit, git_dirty=git_dirty)
+    append_history(
+        agg,
+        n_items=len(items),
+        limit=args.limit,
+        git_dirty=git_dirty,
+        gold_path=args.gold_path,
+        gold_sha256=gold_sha256,
+    )
     print()
 
 

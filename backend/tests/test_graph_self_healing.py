@@ -171,6 +171,11 @@ def test_groundedness_revises_on_fail():
     assert result["verification_status"] == "verified"
     assert result["revision_count"] == 1
     assert complete_mock.call_count == 3
+    revision_messages = complete_mock.call_args_list[-1].args[0]
+    revision_text = revision_messages[-1]["parts"][0]["text"]
+    assert "Return only the revised answer" in revision_text
+    assert "Do not apologize" in revision_text
+    assert "Do not mention" in revision_text
 
 
 def test_rejected_after_one_revision_keeps_final_rejected_status():

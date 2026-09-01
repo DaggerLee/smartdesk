@@ -1,0 +1,83 @@
+{
+  "run_date": "2026-08-23",
+  "model": "models/gemini-3.5-flash",
+  "holdout_path": "backend/eval/holdout_set_2026_08_fresh2.jsonl",
+  "holdout_sha256": "e1efc93a069567bd5259e03bab842c06b0283d8ad1e136bb1a5c6f4841444d01",
+  "kb_collection": {
+    "name": "kb_1",
+    "source_files": [
+      "Agentic_AI_Distilled_Notes.html",
+      "TinaHuang_AI_Distilled_Notes.html",
+      "VibeCoding101_Distilled_Notes.html",
+      "MCP_Distilled_Notes.html"
+    ]
+  },
+  "code_commit_under_test": "834cba3",
+  "artifact_files": {
+    "fresh2_reused_regression": "backend/eval/results/holdout_fresh2_834cba3_20260823.jsonl",
+    "burned_rerank_regression": "backend/eval/results/holdout_rerank_7e59e0b_20260823.jsonl"
+  },
+  "metrics": {
+    "fresh2_reused_regression": {
+      "items": 18,
+      "errors": 0,
+      "error_ids": [],
+      "router_accuracy": "18/18",
+      "retrieval_hit_positive_queries": "14/14",
+      "relevance_ok_positive_queries": "14/14",
+      "relevance_false_negative_ids": [],
+      "contains_pass": "18/18",
+      "grounded_rate": "14/14",
+      "faithfulness_mean": 1.0,
+      "faithfulness_n": 3,
+      "answer_relevancy_mean": 1.0,
+      "answer_relevancy_n": 3,
+      "avg_latency_s": 26.19,
+      "avg_router_latency_s": 4.70,
+      "avg_diagnostic_retrieval_latency_s": 0.03,
+      "avg_pipeline_latency_s": 16.57,
+      "avg_llm_calls": 3.61,
+      "total_retries": 1,
+      "route_miss_ids": [],
+      "contains_fail_ids": [],
+      "grounded_fail_ids": []
+    },
+    "burned_rerank_regression": {
+      "items": 16,
+      "errors": 0,
+      "error_ids": [],
+      "router_accuracy": "16/16",
+      "retrieval_hit_positive_queries": "12/12",
+      "relevance_ok_positive_queries": "12/12",
+      "relevance_false_negative_ids": [],
+      "contains_pass": "15/16",
+      "grounded_rate": "9/12",
+      "faithfulness_mean": 1.0,
+      "faithfulness_n": 2,
+      "answer_relevancy_mean": 1.0,
+      "answer_relevancy_n": 2,
+      "avg_latency_s": 21.61,
+      "avg_router_latency_s": 4.02,
+      "avg_diagnostic_retrieval_latency_s": 0.03,
+      "avg_pipeline_latency_s": 13.02,
+      "avg_llm_calls": 3.38,
+      "total_retries": 0,
+      "route_miss_ids": [],
+      "contains_fail_ids": ["h009"],
+      "grounded_fail_ids": ["h006", "h010", "h012"]
+    }
+  },
+  "interpretation": {
+    "headline": "Failure-class fixes clear fresh2 as reused-set regression evidence; this is not fresh generalization evidence.",
+    "burned_result_use": "The 16-item 2026_08 holdout is burned; its latest run is regression evidence only. Groundedness regressed on three burned rows and must be watched, but fresh2 groundedness is clean.",
+    "fresh2_result_use": "Fresh2 was already burned by earlier committed runs. The 834cba3 run is reused-set regression evidence after the CJK retrieval, router, and eval RAG prompt fixes; a successor holdout is required for any new generalization claim.",
+    "next_step": "Freeze implementation, create a successor holdout with new question phrasings and provenance, run it once, and stop rather than tuning against it."
+  },
+  "limitations": [
+    "Fresh2 has multiple committed runs and is no longer fresh; these metrics are regression evidence on a reused holdout.",
+    "Fresh2 was created after inspecting the burned set failure classes; it tests coverage of related failure classes but is not independent of the chosen failure taxonomy.",
+    "The relevance denominator contains only answerable positive queries because run_eval does not perform diagnostic retrieval for unanswerable rows; this run measures retrieval sensitivity, not negative-query specificity.",
+    "Direct-control rows f001/f002 used min_hits=1, so their contains_pass result should be read with the recorded answer text, not as a standalone behavioral-proof metric.",
+    "Route-only and full-pipeline runs use live Gemini output, so exact answer wording may vary across reruns."
+  ]
+}

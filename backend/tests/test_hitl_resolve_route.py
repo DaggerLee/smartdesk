@@ -183,7 +183,7 @@ def test_initial_write_request_emits_confirmation_then_paused_and_passes_user_id
     assert stream.call_args.kwargs["user_id"] == 7
 
 
-def test_proposal_failure_emits_typed_error_then_failed() -> None:
+def test_initial_write_graph_failure_emits_typed_error_then_failed() -> None:
     body = chat.ChatRequest(kb_id=3, message="Save this as a note")
     with (
         patch.dict(
@@ -200,7 +200,36 @@ def test_proposal_failure_emits_typed_error_then_failed() -> None:
             chat.chat_stream(body, db=MagicMock(), current_user=SimpleNamespace(id=7))
         )
 
-    assert '"stage": "proposal"' in frames[0]
+    assert '"stage": "graph"' in frames[0]
+    assert frames[-1] == "data: [FAILED]\n\n"
+    assert all("[DONE]" not in frame for frame in frames)
+
+
+def test_initial_write_stream_failure_after_progress_is_not_labeled_proposal() -> None:
+    body = chat.ChatRequest(kb_id=3, message="Save this as a note")
+
+    def stream_then_fail(*args, **kwargs):
+        yield GraphEvent(type="tool_call", data={"name": "retrieve", "args": {}})
+        raise RuntimeError("checkpoint failed")
+
+    with (
+        patch.dict(
+            "os.environ",
+            {"SMARTDESK_AGENT_BACKEND": "langgraph", "SMARTDESK_HITL_WRITE_NOTE": "true"},
+            clear=False,
+        ),
+        patch("routers.chat._owned_kb"),
+        patch("routers.chat._recent_usable_history", return_value=[]),
+        patch("routers.chat.stream_graph", side_effect=stream_then_fail),
+        patch("routers.chat.StreamingResponse", side_effect=lambda content, **kwargs: content),
+    ):
+        frames = list(
+            chat.chat_stream(body, db=MagicMock(), current_user=SimpleNamespace(id=7))
+        )
+
+    assert '"status": "Searching knowledge base…"' in frames[0]
+    assert '"stage": "graph"' in frames[1]
+    assert '"stage": "proposal"' not in frames[1]
     assert frames[-1] == "data: [FAILED]\n\n"
     assert all("[DONE]" not in frame for frame in frames)
 
@@ -288,13 +317,13 @@ def test_receipt_answer_is_flag_independent_and_matches_persisted_answer(
     assert response.text.endswith("data: [DONE]\n\n")
 
 
-def test_non_write_graph_failure_is_not_mislabeled_as_proposal_failure() -> None:
+def test_non_write_graph_failure_is_not_wrapped_as_initial_write_failure() -> None:
     with (
         patch("routers.chat.stream_graph", side_effect=RuntimeError("ordinary failure")),
         patch("routers.chat.is_hitl_write_note_enabled", return_value=True),
     ):
         with pytest.raises(RuntimeError, match="ordinary failure"):
-            list(chat._stream_graph_with_proposal_failure("hello", 3))
+            list(chat._stream_graph_with_initial_failure("hello", 3))
 
 
 def test_conversation_identity_conflict_returns_409() -> None:

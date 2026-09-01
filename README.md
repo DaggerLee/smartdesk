@@ -32,14 +32,17 @@ Evidence identifiers refer to entries in
 | Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
 | Browser approval controls | Current-page approve/reject visual smoke; 21 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
+| Fresh holdout reproduction | 16-item fresh holdout; tuned eliminated baseline timeout failures (6 → 0) and improved grounded rate (50.0% → 91.7%), with latency regression | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-008 |
 
 These baseline metrics are historical regression evidence, not current
 statistical guarantees or fresh-holdout generalization results. The maintained
-gold set currently has 36 items; any future benchmark-refresh claim should lock
-a fresh holdout before model runs and report it separately from the regression
-set. The live HITL evidence is one local and one Docker success, not a three-run
-evaluation. Browser terminal-state acceptance used deterministic zero-Gemini
-fixtures, not live-model browser round trips.
+gold set currently has 36 items; fresh holdout and successor holdout claims are
+reported separately from the regression set. The fresh holdout reproduction is a
+16-item same-KB comparison, not a multi-run statistical study: reliability and
+groundedness reproduced, routing was mixed, and tuned latency regressed. The
+live HITL evidence is one local and one Docker success, not a three-run
+evaluation. Browser acceptance used deterministic zero-Gemini fixtures, not
+live-model browser round trips.
 
 ## Current Architecture
 
@@ -127,6 +130,8 @@ full evidence and limitations for:
 - EV-004 — HITL write-note real-model closure
 - EV-005 — HITL write-note production cutover
 - EV-006 — unified Markdown XSS boundary
+- EV-007 — browser approval controls
+- EV-008 — fresh holdout reproduction check
 
 ---
 

@@ -5,10 +5,11 @@ from pathlib import Path
 TOP_K: int = 5
 CHUNK_SIZE: int = 800
 CHUNK_OVERLAP: int = 100
+EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
 # cosine distance; below this = relevant. Recalibrated 2026-07-11 after the
-# embedding model swap to paraphrase-multilingual-MiniLM-L12-v2 (old 0.8 was
-# tuned for the English-only DefaultEmbeddingFunction, under which Chinese
-# queries always scored ~0.85-1.9 — relevance_ok was permanently ~0%).
+# embedding model swap to EMBEDDING_MODEL (old 0.8 was tuned for the
+# English-only DefaultEmbeddingFunction, under which Chinese queries always
+# scored ~0.85-1.9 — relevance_ok was permanently ~0%).
 RELEVANCE_THRESHOLD: float = 0.62
 
 # ── Agent backend ─────────────────────────────────────────────────────────────

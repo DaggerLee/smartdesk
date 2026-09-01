@@ -51,6 +51,71 @@ def test_aggregate_records_verification_status_distribution():
         "verified": 2,
     }
 
+def test_aggregate_excludes_errors_from_contains_denominator():
+    passed = _item("pass", None)
+    passed.contains_pass = True
+    failed = _item("fail", None)
+    failed.contains_pass = False
+    errored = _item("error", None)
+    errored.contains_pass = False
+    errored.error = "provider unavailable"
+    errored.retrieval_hit = True
+    errored.relevance_ok = True
+
+    aggregate = run_eval.aggregate([passed, failed, errored])
+
+    assert aggregate["e2e_contains_pass"] == "1/2 = 50.0%"
+    assert aggregate["retrieval_recall_k"] == "1/1 = 100.0%"
+    assert aggregate["relevance_ok_rate"] == "1/1 = 100.0%"
+    assert aggregate["total"] == 3
+    assert aggregate["errors"] == 1
+
+
+def test_aggregate_contains_is_not_applicable_when_all_rows_error():
+    errored = _item("error", None)
+    errored.contains_pass = False
+    errored.error = "provider unavailable"
+
+    aggregate = run_eval.aggregate([errored])
+
+    assert aggregate["e2e_contains_pass"] == "N/A"
+    assert aggregate["total"] == 1
+    assert aggregate["errors"] == 1
+
+
+def test_report_prints_canonical_embedding_model(capsys):
+    aggregate = run_eval.aggregate([_item("a1", "verified")])
+
+    run_eval.print_report(aggregate, [_item("a1", "verified")])
+
+    output = capsys.readouterr().out
+    assert f"embedding: {run_eval.config.EMBEDDING_MODEL}" in output
+    assert "all-MiniLM-L6-v2" not in output
+    assert "relevance_ok expected ~0%" not in output
+
+
+def test_report_marks_error_contains_as_not_applicable(capsys):
+    passed = _item("pass", None)
+    passed.contains_pass = True
+    missed = _item("miss", None)
+    missed.contains_pass = False
+    errored = _item("error", None)
+    errored.contains_pass = False
+    errored.error = "provider unavailable"
+
+    results = [passed, missed, errored]
+    run_eval.print_report(run_eval.aggregate(results), results)
+
+    rows = {
+        line.split()[0]: line.split()
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith(("pass", "miss", "error"))
+    }
+    assert rows["pass"][7] == "✓"
+    assert rows["miss"][7] == "✗"
+    assert rows["error"][7] == "-"
+    assert rows["error"][-1] == "ERR"
+
 
 def test_history_archive_preserves_status_distribution(tmp_path):
     aggregate = run_eval.aggregate([
@@ -159,6 +224,55 @@ def test_simplified_non_agent_eval_is_labeled(route):
 
     assert result.answer_scope == "eval_simplified"
 
+
+
+def test_eval_item_records_latency_breakdown_and_llm_stats():
+    item = {
+        "id": "q1",
+        "query": "q",
+        "category": "factual",
+        "difficulty": "medium",
+        "expected_route": "rag",
+        "kb_id": 1,
+        "expected_answer_contains": ["answer"],
+        "min_hits": 1,
+        "grounding_required": False,
+    }
+
+    class _Stats:
+        def __enter__(self):
+            return {
+                "llm_call_count": 2,
+                "llm_retry_count": 1,
+                "llm_retry_sleep_s": 5.0,
+            }
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    with patch("eval.run_eval.collect_stats", return_value=_Stats()), \
+         patch("eval.run_eval._router_route", return_value="rag"), \
+         patch("eval.run_eval.RetrieveTool") as retrieve_cls, \
+         patch("eval.run_eval._run_rag", return_value="answer"):
+        retrieve_cls.return_value.run.return_value = {
+            "chunks": ["answer chunk"],
+            "relevance_ok": True,
+        }
+        result = run_eval.eval_item(item)
+
+    assert result.router_latency_s >= 0
+    assert result.diagnostic_retrieval_latency_s >= 0
+    assert result.pipeline_latency_s >= 0
+    assert result.llm_call_count == 2
+    assert result.llm_retry_count == 1
+    assert result.llm_retry_sleep_s == 5.0
+
+
+
+def test_rag_prompt_requires_supported_subpoint_coverage():
+    assert "Cover every requested subpoint" in run_eval._RAG_PROMPT_TMPL
+    assert "causal evidence" in run_eval._RAG_PROMPT_TMPL
+    assert "only when the excerpts explicitly provide them" in run_eval._RAG_PROMPT_TMPL
 
 def test_aggregate_records_answer_scope_distribution():
     delivered = _item("a1", "verified")

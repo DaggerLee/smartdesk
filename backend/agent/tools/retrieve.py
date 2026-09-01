@@ -36,10 +36,12 @@ class RetrieveTool:
         with _trace_span({"type": "tool_call", "tool": "retrieve", "query_len": len(query)}) as _out:
             results = chroma_client.query_documents(self.kb_id, query, n_results=TOP_K)
             evidence = [{"text": r["text"], "source": r["filename"]} for r in results]
-            top_distance = results[0]["distance"] if results else float("inf")
-            relevance_ok = top_distance < RELEVANCE_THRESHOLD
+            best_distance = min((r["distance"] for r in results), default=float("inf"))
+            strong_lexical_match = any(bool(r.get("strong_lexical_match")) for r in results)
+            relevance_ok = best_distance < RELEVANCE_THRESHOLD or strong_lexical_match
             _out["chunks_count"] = len(results)
-            _out["top_distance"] = top_distance
+            _out["best_distance"] = best_distance
+            _out["strong_lexical_match"] = strong_lexical_match
             _out["relevance_ok"] = relevance_ok
         return {
             "chunks": [r["text"] for r in results],

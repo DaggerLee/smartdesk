@@ -4,6 +4,284 @@ Revisions to `gold_set.jsonl` after the item itself was already scored — i.e.
 the label was wrong, not the system. Route/scoring bugs found in the
 harness or agent code are fixed in code, not here.
 
+## Evaluation-set governance
+
+Agents may propose a gold-set or holdout label correction only when they cite the supporting source evidence. They must not apply the correction without the user's explicit approval.
+Existing scored artifacts remain immutable and must continue to be reported under the labels used when they were produced.
+
+
+## 2026-08-23 — successor4 preregistered holdout set
+
+- Added `holdout_set_2026_08_successor4.jsonl` as the next clean 18-item
+  successor after diagnosing successor3 failures and freezing the router-only
+  precedence rewrite at `d8728d6`. This set is reserved for a paired baseline
+  versus candidate run only; after inspection it is burned for future tuning.
+- Holdout SHA-256:
+  `219bf52d2096a10c16a26619e51c30082d9c4dc470dfbb5170ddb320dcb67663`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`.
+- Coverage uses new IDs `y001`-`y018` and new phrasings: direct controls,
+  source-bound agentic/Tina/Vibe/MCP facts, source-bound technical-boundary
+  facts that should remain RAG, cross-source synthesis and parallel lookups
+  that should remain agent, and corpus-negative absence checks.
+- The two absence rows were checked by literal search across the four indexed
+  note files for `Kafka`/`consumer group`/`rebalance` and
+  `Prometheus`/`Alertmanager`/`silence`.
+- Preregistered paid-eval gate: run `config.GEMINI_MODEL =
+  "models/gemini-3.5-flash"`, `SMARTDESK_AGENT_BACKEND=langgraph`, the same
+  `kb_1` corpus, and this successor4 file against baseline `ef70ae4` and
+  candidate `d8728d6`. The run is worth doing only as a paired causal test of
+  the router precedence rewrite.
+  Route success is arithmetic and fixed before results are visible:
+  candidate route_correct must exceed baseline route_correct separately on
+  source-bound factual RAG rows (`y003`-`y013`) and corpus-negative RAG rows
+  (`y017`-`y018`). Non-regression requires candidate results to be at least
+  baseline on direct rows (`y001`-`y002`), agent-boundary rows
+  (`y014`-`y016`), positive-query retrieval, answer containment, and
+  groundedness. Do not mix in `h012` keyword changes or any additional
+  prompt/source changes before this comparison.
+- Baseline leg run:
+  `results/holdout_successor4_baseline_ef70ae4_20260824.jsonl`. Metrics:
+  errors `0`, router `18/18`, source-bound factual route `11/11`,
+  corpus-negative route `2/2`, positive-query retrieval `14/14`,
+  positive-query relevance `14/14`, contains `14/18`, grounded `14/14`,
+  faithfulness `0.857` (`n=3`), answer relevancy `1.0` (`n=3`), LLM calls
+  `69`. Because the baseline already hit the maximum route score in both
+  preregistered targeted strata, the candidate leg cannot satisfy the required
+  positive route-delta criterion and was not run.
+- Current-router route-only leg:
+  `results/holdout_successor4_router_candidate_a3148c5_20260831.jsonl`.
+  Run from clean HEAD `a3148c5`; `agent/router.py` includes the `d8728d6`
+  router precedence rewrite. Scope was router classification only on the same
+  successor4 set and `models/gemini-3.5-flash`; no retrieval, answer
+  generation, grounding, judge calls, candidate full eval, gold, matcher,
+  corpus, prompt, or scoring changes. Result SHA-256:
+  `a8d6d8fcd970e74d6e434cf2ad7f15d153b5831da59265004ec70e9c2c2d5318`.
+  Metrics: errors `0`, router `18/18`, direct `2/2`, source-bound factual RAG
+  `11/11`, agent-boundary `3/3`, corpus-negative RAG `2/2`, logical router
+  calls `18`, retries `4`, retry sleep `65.0s`. This is held-out
+  generalization and non-regression evidence for the shipped router. It does
+  not establish causal improvement over `ef70ae4` because the baseline was
+  already at route ceiling.
+- Post-baseline answer-quality diagnosis: `y015` exposed agent groundedness
+  revision leakage, where the revision answer mentioned prior unsupported
+  wording instead of returning only the user-facing revised answer; the
+  revision-prompt mechanism was fixed in `737a215`, with no paid eval rerun.
+  `y003` remains a runtime synthesis-undercoverage observation because
+  retrieval contained every expected fact but the answer omitted the source
+  definition contrast (`多步骤` / `一次性生成`). `y011` is a matcher
+  strictness candidate, not a runtime failure: the answer correctly explained
+  the self-check mechanism from `63` and `mini-eval`, while the matcher also
+  required unrelated template fields (`HTML table`, `fetch`, image usage) that
+  the query did not ask for. `y016` is also a matcher strictness candidate:
+  the answer used equivalent wording (`重新撰写提示词`, `更清晰的约束`) for the
+  recovery-step row, but the matcher only accepted `重写 prompt|更明确`.
+  User approved correcting `y011` and `y016` matchers in-session. `y011` now
+  scores the self-check mechanism the query asks for (`63`, `mini-eval`, and
+  objective verification wording) instead of unrelated template fields. `y016`
+  now accepts the observed equivalent recovery-step wording
+  (`重新撰写提示词`, `更清晰的约束`). `y003` and `y015` remain unchanged.
+- Targeted post-fix replay attempt:
+  `results/holdout_successor4_revision_replay_b51cd17_20260826.jsonl`.
+  Actual run time was 2026-08-31 despite the legacy run-id suffix. Scope was
+  limited to `y014` and `y015` under `models/gemini-3.5-flash`,
+  `SMARTDESK_AGENT_BACKEND=langgraph`, and `kb_1`. The replay is
+  external-service-invalid, not evidence of answer quality: both rows routed
+  correctly (`2/2`) and retrieval hit (`2/2`), but both answer generations
+  ended in terminal Gemini `503 Server Error` after repeated `ReadTimeout`/503
+  retries. Totals: LLM calls `13`, retries `10`, retry sleep `190.0s`.
+  Exclude its `contains 0/2` from quality comparisons because no answers were
+  produced.
+- Targeted post-fix replay:
+  `results/holdout_successor4_revision_replay_dd68f01_20260831.jsonl`.
+  Run id `successor4_revision_replay_dd68f01_20260831`, subset SHA-256
+  `dc56d181b7a4f56f14ef55ab8bacab6b3168aa3b623d311029ad8098971f350d`,
+  result SHA-256
+  `03b634475ffc587675e97202a93d9a9728f15b694d7221f949471a78571d3338`.
+  Scope was limited to `y014` and `y015` under `models/gemini-3.5-flash`,
+  `SMARTDESK_AGENT_BACKEND=langgraph`,
+  `SMARTDESK_VERIFIED_AGENT_DELIVERY=1`, and `kb_1`; no candidate/router leg,
+  gold, matcher, corpus, prompt, or scoring changes. Metrics: errors `0`,
+  router `2/2`, retrieval `2/2`, relevance `2/2`, contains `2/2`, grounded
+  `2/2`, answer scope `production_delivered 2`, delivery kind `graph_answer
+  2`, verification status `verified 2`, faithfulness `0.4` (`n=2`;
+  `y014=0.5`, `y015=0.3`), answer relevancy `1.0` (`n=2`), LLM calls `16`,
+  retries `1`, retry sleep `5.0s`. Replay classification: valid pass with a
+  presentation caveat and a scope caveat. This run enabled
+  `SMARTDESK_VERIFIED_AGENT_DELIVERY=1`, while the `ef70ae4` successor4
+  baseline scored internal/eval-simplified answers with verified delivery off;
+  therefore its `contains 2/2` must not be used as a direct baseline-to-replay
+  attribution for `737a215` alone. The valid claim is narrower: under the
+  current production-delivery scope, both verified graph answers contain no
+  revision/apology/prior-answer/grounding-audit meta-language. `y014` directly
+  answered with the requested causal chain. `y015` covered the component-to-E2E
+  argument and included Tina's eval quote, but appended a short explanatory
+  postscript after the quote, so this run should not be cited as literal
+  quote-as-final-word polish.
+
+
+
+
+
+
+## 2026-08-23 — successor3 holdout set
+
+- Added `holdout_set_2026_08_successor3.jsonl` as the next clean 18-item
+  successor after finalizing the router prompt examples. This set replaced
+  successor2 for generalization evidence; after the first formal run below it
+  is burned and must not be tuned in place.
+- Holdout SHA-256:
+  `ec5871ecec3ae1926f852861557d6cb907557cc4b7060cee3e2322405f10fbf0`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`.
+- Coverage uses new IDs `x001`-`x018` and new phrasings: direct controls,
+  agentic benefits/decomposition/reflection/tool-use/eval/optimization facts,
+  MCP standardization/schema/parallel-tool protocol details, reproducibility
+  and prompt-discipline facts, cross-source execution-boundary synthesis, and
+  corpus-negative absence.
+- The absence row was checked by literal search for `WebRTC`/`ICE candidate`/
+  `TURN server` across the four indexed note files.
+- First formal successor3 run:
+  `results/holdout_successor3_ef70ae4_20260823.jsonl`. Metrics: errors `0`,
+  router `17/18`, positive-query retrieval `15/15`, positive-query relevance
+  `15/15`, contains `17/18`, grounded `15/15`, faithfulness `1.0` (`n=1`),
+  answer relevancy `1.0` (`n=1`), average latency `25.28s`. Route failed on
+  `x007`; contains failed on `x014`. The run is now burned. Post-fix burned
+  regression artifact from the same reviewed HEAD:
+  `results/holdout_rerank_ef70ae4_20260823.jsonl`; summary:
+  `results/holdout_ef70ae4_20260823_summary.json`.
+
+
+## 2026-08-23 — successor2 retired development set
+
+- Added `holdout_set_2026_08_successor2.jsonl` as the second successor
+  18-item holdout after the bounded diagnostic-chain prompt fix. It was never
+  formally evaluated.
+- Lifecycle correction: reviewer found the later router example in `617fe66`
+  semantically matched successor2 `t011` (short-lived/renewal credentials vs
+  access/refresh tokens). Exact string leakage was absent, but the semantic
+  template contamination is enough to retire successor2 as a clean holdout.
+  Treat it as a development set only; do not use it as generalization evidence.
+- Holdout SHA-256:
+  `ff53c54b2b4fb2352ee8b71f1eebf0ff6270ab2d9a61595b9e2599af5564befb`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`, which is present in
+  `docs-local/notes/` but not in the rebuilt `kb_1` index.
+- Coverage uses new IDs `t001`-`t018` and new phrasings: direct control,
+  autonomy-spectrum retrieval, external-feedback specifics, error-analysis
+  causal attribution, rubric scoring, MCP role/schema/control boundaries,
+  failure recovery, cross-source mini-eval/design-principle synthesis, parallel
+  dual-concept lookup, and corpus-negative absence.
+- The absence row was checked by literal search for
+  `Terraform`/`OpenTelemetry`/`distributed tracing` across the four indexed
+  note files.
+
+## 2026-08-23 — successor holdout set
+
+- Added `holdout_set_2026_08_successor.jsonl` as the successor 18-item
+  holdout after the CJK retrieval, cross-source router, and eval RAG prompt
+  failure-class fixes were committed. This set is reserved for one formal
+  generalization run only; after inspection it is burned for future tuning.
+- Holdout SHA-256:
+  `543c0a0f00d686d7d038366a56bd761d944a0d2322626e8508cbabdc55cac4c4`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`, which is present in
+  `docs-local/notes/` but not in the rebuilt `kb_1` index.
+- Coverage uses new IDs `s001`-`s018` and new phrasings for the same broad
+  failure classes: CJK compound retrieval, causal diagnostic-chain answers,
+  cross-source synthesis routing, parallel dual-concept retrieval, and
+  corpus-negative absence checks.
+- The two absence rows were checked by literal search for the absent topics
+  (`GraphQL`/`federation`/`schema stitching`, `CUDA`/`kernel fusion`/
+  `shared memory`) across the four indexed note files.
+- First formal successor run:
+  `results/holdout_successor_d22c807_20260823.jsonl`. Metrics: errors `0`,
+  router `18/18`, positive-query retrieval `14/14`, positive-query relevance
+  `14/14`, contains `18/18`, grounded `11/14`, faithfulness `0.9` (`n=3`),
+  answer relevancy `1.0` (`n=3`), average latency `28.39s`, retries `0`.
+  Groundedness failed on `s003`, `s004`, and `s012`; the run is now burned
+  and is evidence of eval RAG prompt overreach, not a set to tune further.
+
+
+## 2026-08-23 — fresh2 holdout set
+
+- Added `holdout_set_2026_08_fresh2.jsonl` as a new 18-item holdout because
+  `holdout_set_2026_08.jsonl` was burned by the adjusted full run and the
+  prompt-invariant route probe.
+- Holdout SHA-256:
+  `e1efc93a069567bd5259e03bab842c06b0283d8ad1e136bb1a5c6f4841444d01`.
+- The set stays on the current `kb_1` corpus owner: the four files loaded by
+  `eval/rebuild_kb1_index.py` (`Agentic_AI_Distilled_Notes.html`,
+  `TinaHuang_AI_Distilled_Notes.html`, `VibeCoding101_Distilled_Notes.html`,
+  `MCP_Distilled_Notes.html`). It deliberately excludes
+  `JFP_AgentSkills_Podcast_Distilled_Notes.html`, which is present in
+  `docs-local/notes/` but not in the rebuilt `kb_1` index.
+- Coverage targets the observed failure classes from the burned set without
+  reusing the same questions: lexical underfetch, multi-key generation depth,
+  grounded cross-source synthesis, parallel retrieval, routing boundaries, and
+  corpus-negative absence checks.
+- The two absence rows were checked by literal search for the specific absent
+  topics (`Kubernetes`/`HPA`, `Rust`/`borrow checker`) across the four indexed
+  note files.
+- Failure-class regression run after CJK retrieval, router, and eval RAG prompt
+  fixes: `results/holdout_fresh2_834cba3_20260823.jsonl`; summary:
+  `results/holdout_fresh2_20260823_summary.json`. Burned 2026_08 regression
+  artifact: `results/holdout_rerank_7e59e0b_20260823.jsonl`.
+  Metrics: errors `0`, router `18/18`, positive-query retrieval `14/14`,
+  positive-query relevance `14/14`, contains `18/18`, grounded `14/14`,
+  faithfulness `1.0` (`n=3`), answer relevancy `1.0` (`n=3`),
+  average latency `26.19s`, retries `1`.
+  Fresh2 was already burned by earlier committed runs, so this is reused-set
+  regression evidence after the failure-class fixes, not new fresh
+  generalization evidence. Relevance here measures positive-query sensitivity,
+  not negative-query specificity; unanswerable rows do not run diagnostic
+  retrieval in `run_eval.py`.
+
+
+## 2026-08-22 — fresh holdout reproduction set
+
+- Added `holdout_set_2026_08.jsonl` as a fresh 16-item holdout for checking
+  whether the 36-item W4/error-analysis tuning generalized beyond the set used
+  for repeated tuning and rescoring.
+- Holdout SHA-256:
+  `18342083337d982ccda38ca026c4c4dba328d729143e2547c5863f351351e155`.
+- The set uses the same synonym-group keyword syntax described below; baseline
+  backports of `_normalize` / `_keyword_hit` were required so both comparison
+  legs scored the new holdout with the same matcher semantics.
+- First-pass comparison used the same KB (`kb_1`, 50 embeddings) and
+  `models/gemini-3.5-flash`: baseline parent `e8dddab` / prep `d2aa26a` versus
+  tuned parent `e6a5450` / prep `e0ec68a`.
+- Reproduction ruling: partial. Transport robustness and groundedness
+  reproduced; routing and broad semantic correctness did not cleanly reproduce;
+  tuned latency regressed.
+- Result artifacts:
+  `results/holdout_baseline_e8dddab_firstpass_20260822.jsonl`,
+  `results/holdout_baseline_e8dddab_after_resume_20260822.jsonl`,
+  `results/holdout_tuned_e6a5450_20260822.jsonl`, and
+  `results/holdout_20260822_summary.json`.
+- This section records the new holdout protocol and outcome; it is not a
+  post-score label correction.
+
+- Follow-up router/latency cleanup `697b275` and adjusted holdout run
+  `holdout_adjusted_697b275_20260822` used this same 16-item file again.
+  Subsequent prompt-invariant route probe `cd6c0ef` also used it for routing
+  verification. The holdout is therefore no longer fresh for future tuning
+  decisions; use it only as a burned regression artifact. Adjusted artifacts:
+  `results/holdout_adjusted_697b275_20260822.jsonl` and
+  `results/holdout_router_prompt_invariant_cd6c0ef_20260822.jsonl`.
+
 ## 2026-07-22 - HITL write-note protocol set
 
 - Added `hitl_gold_set.jsonl` as a separate deterministic protocol set rather
