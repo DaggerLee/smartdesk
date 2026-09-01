@@ -1,8 +1,8 @@
 # SmartDesk — Verified Enterprise Knowledge Assistant
 
 SmartDesk is a portfolio-grade knowledge assistant that combines routed RAG,
-LangGraph agent workflows, MCP-exposed tools, measurable evaluation, and an
-API-driven human approval path for persistent writes.
+LangGraph agent workflows, MCP-exposed tools, measurable evaluation, and a
+browser-assisted human approval path for persistent writes.
 
 ## Why This Project
 
@@ -16,8 +16,8 @@ persisted, and user-visible results drift apart?
 |---|---|---|---|
 | Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
 | Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
-| Approval-gated agent actions | No approval-gated write tool | API-approved `write_note`, finalized only from a committed receipt | EV-004, EV-005 |
-| Agent-quality evaluation | No versioned gold-set evaluation | A 35-item gold set and evaluation harness | EV-001 |
+| Approval-gated agent actions | No approval-gated write tool | Browser-assisted `write_note` approval, finalized only from a committed receipt | EV-004, EV-005, EV-007 |
+| Agent-quality evaluation | No versioned gold-set evaluation | Original 35-item harness, now maintained as a 36-item regression set | EV-001 |
 | Markdown rendering | Unsanitized `v-html` sink | One sanitized rendering boundary with source-level guards | EV-006 |
 
 Evidence identifiers refer to entries in
@@ -27,19 +27,22 @@ Evidence identifiers refer to entries in
 
 | Area | Verified result | Evidence |
 |---|---|---|
-| Measurable baseline | 35-item set; 91.7% router accuracy; 94.4% end-to-end contains pass; 88% grounded rate; zero execution errors | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-001 |
+| Measurable baseline | Historical baseline: 91.7% router accuracy; 94.4% end-to-end contains pass; 88% grounded rate; zero execution errors | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-001 |
 | HITL cutover | 258 backend tests; 5 frontend tests; 73-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Real-model write closure | One local and one Docker success; exact token and monetary cost unknown | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-005 |
 | Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
-| Fresh holdout reproduction | 16-item fresh holdout; tuned eliminated baseline timeout failures (6 → 0) and improved grounded rate (50.0% → 91.7%), with latency regression | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
+| Browser approval controls | Current-page approve/reject visual smoke; 21 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
+| Fresh holdout reproduction | 16-item fresh holdout; tuned eliminated baseline timeout failures (6 → 0) and improved grounded rate (50.0% → 91.7%), with latency regression | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-008 |
 
-These baseline metrics are historical evidence, not current statistical
-guarantees. The fresh holdout reproduction is a 16-item same-KB comparison, not
-a multi-run statistical study: reliability and groundedness reproduced, routing
-was mixed, and tuned latency regressed. The live HITL evidence is one local and
-one Docker success, not a three-run evaluation. Browser terminal-state
-acceptance used a deterministic zero-Gemini API, not a live-model browser round
-trip.
+These baseline metrics are historical regression evidence, not current
+statistical guarantees or fresh-holdout generalization results. The maintained
+gold set currently has 36 items; fresh holdout and successor holdout claims are
+reported separately from the regression set. The fresh holdout reproduction is a
+16-item same-KB comparison, not a multi-run statistical study: reliability and
+groundedness reproduced, routing was mixed, and tuned latency regressed. The
+live HITL evidence is one local and one Docker success, not a three-run
+evaluation. Browser acceptance used deterministic zero-Gemini fixtures, not
+live-model browser round trips.
 
 ## Current Architecture
 
@@ -82,10 +85,11 @@ flowchart TD
     F -->|"verification_source: action_receipt; bypass groundedness"| E[END]
 ```
 
-The graph pauses before the file write. Approval or an edited payload resumes
-the write path; rejection skips the write. Both outcomes finalize from the
-action receipt, and write claims do not pass through the ordinary answer
-groundedness path.
+The graph pauses before the file write. The browser can approve the original
+proposal, submit a complete edited payload, or reject the proposal for the
+current page's pending action. Resolution still goes through the strict API
+endpoint; both write and reject outcomes finalize from the action receipt, and
+write claims do not pass through the ordinary answer groundedness path.
 
 ## Engineering Decisions
 
@@ -106,11 +110,13 @@ framework.
 
 ## Current Limitations
 
-- Human approval is API-only; there are no browser approval controls.
+- Browser approval controls are current-page only; refresh recovery and a
+  pending-action queue remain out of scope.
 - SQLite checkpointing targets a single-process/demo deployment.
 - Live HITL evidence is one local and one Docker success, not a three-run
   evaluation.
-- Browser terminal-state acceptance used a deterministic zero-Gemini API.
+- Browser terminal-state and approval-control acceptance used deterministic
+  zero-Gemini fixtures.
 - Exact token and monetary cost are unknown.
 
 ## Evidence Index
@@ -124,7 +130,8 @@ full evidence and limitations for:
 - EV-004 — HITL write-note real-model closure
 - EV-005 — HITL write-note production cutover
 - EV-006 — unified Markdown XSS boundary
-- EV-007 — fresh holdout reproduction check
+- EV-007 — browser approval controls
+- EV-008 — fresh holdout reproduction check
 
 ---
 

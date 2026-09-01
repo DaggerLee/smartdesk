@@ -6,16 +6,23 @@ This append-only log records verified engineering outcomes that can be traced to
 
 **Problem:** Agent changes could not be judged objectively without a stable evaluation contract.
 
-**Delivered:** A 35-item gold set and evaluation harness covering routing, retrieval, answer keywords, groundedness, faithfulness, and answer relevancy.
+**Delivered:** An original 35-item gold-set harness, now maintained as a 36-item regression set, covering routing, retrieval, answer keywords, groundedness, faithfulness, and answer relevancy.
 
 **Evidence:**
 
 - Baseline commit: `e8dddab`
 - Harness commit: `a6c2acc`
 - Recorded baseline: router accuracy 91.7%, end-to-end contains pass 94.4%, grounded rate 88%, zero execution errors.
-- Later safeguards added run locking, resume, tracked-dirty-tree rejection, per-run archives, and same-period baseline comparison.
+- Later gold-set maintenance brought `backend/eval/gold_set.jsonl` to 36 items;
+  the historical metrics above remain tied to their recorded runs rather than a
+  fresh holdout.
+- Later safeguards added run locking, resume, tracked-dirty-tree rejection,
+  per-run archives, and same-period baseline comparison.
 
-**Limitations:** LLM metrics are stochastic. Formal comparisons require contemporary three-run means; historical pooled numbers are trend context only.
+**Limitations:** LLM metrics are stochastic. Formal comparisons require
+contemporary three-run means; historical pooled numbers are trend context only.
+The maintained 36-item set is regression evidence after repeated use, not proof
+of fresh-holdout generalization.
 
 ## EV-002 — LangGraph migration with crash recovery
 
@@ -153,7 +160,42 @@ content-security-policy rollout or a backend sanitization framework. Separate
 observations about narrow-screen layout, interrupted SSE state, and paused
 flow refresh continuity remain deferred and are not claimed as fixed.
 
-## EV-007 — Fresh holdout reproduction check
+## EV-007 — Browser approval controls
+
+**Problem:** The default HITL write path could pause and resolve through the
+API, but the browser exposed only a terminal waiting state. A user could not
+approve, edit, or reject the pending `write_note` proposal from the page.
+
+**Delivered:** The current chat page now stores the `confirmation_required`
+payload on the paused message, renders one approval card, and resolves through
+the existing strict `/api/chat/actions/{thread_id}/resolve` SSE endpoint.
+Approve sends no title/content, edit sends a complete replacement title and
+content, and reject omits a blank reason. Successful resolve streams clear the
+pending controls only after the canonical receipt answer is delivered.
+
+**Evidence:**
+
+- Frozen-spec amendment and acceptance brief: `d8c7cd2`.
+- Frontend parser/state verification after implementation: 21 tests passed via
+  `node --test src/**/*.test.js`.
+- Production build completed with 75 transformed modules via `npm run build`.
+- Backend regression suite passed after isolating eval delivery-policy tests
+  from local retrieval database state: 258 tests passed via `pytest`.
+- Browser smoke used a deterministic zero-Gemini fixture against the real Vite
+  frontend in headless Chromium. It selected a knowledge base, submitted two
+  chat requests, rendered the approval card, approved the first proposal,
+  rejected the second proposal, observed both canonical receipt answers, and
+  asserted the resolve payloads were exactly
+  `{action_id:"action-1", decision:"approve"}` and
+  `{action_id:"action-2", decision:"reject"}`.
+- No backend route, schema, model, or Gemini integration changed.
+
+**Limitations:** Approval controls are current-page state only. Refresh
+recovery, pending-action lists, Note CRUD/list APIs, and cross-session approval
+queues remain outside scope. The browser smoke was deterministic and local; it
+does not claim another live-model browser run or paid Gemini request.
+
+## EV-008 — Fresh holdout reproduction check
 
 **Problem:** The 36-item evaluation set had been used for repeated tuning,
 rescoring, and error analysis, so its improvements needed a fresh holdout check

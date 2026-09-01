@@ -308,11 +308,55 @@
 - [ ] Change config, example environment, and Docker defaults only.
 - [ ] Run full direct/RAG/agent cutover tests and the complete suite again.
 - [ ] Commit as an independent cutover commit; do not merge or push.
+
+### Task 12: Browser approval controls for current-page proposals
+
+**Files:**
+- Modify: `frontend/src/api/index.js`
+- Modify: `frontend/src/api/index.test.js`
+- Modify: `frontend/src/components/chatStreamState.js`
+- Modify: `frontend/src/components/chatStreamState.test.js`
+- Modify: `frontend/src/components/ChatWindow.vue`
+- Modify docs only after verified outcome: `README.md`,
+  `docs/PROJECT_EVIDENCE.md`
+
+**Interfaces:**
+- Extends `sendMessageStream` to expose `confirmation_required` payloads.
+- Adds `resolveActionStream(thread_id, resolution, callbacks)` for the
+  existing `POST /api/chat/actions/{thread_id}/resolve` SSE endpoint.
+- Adds one pending-action state shape owned by the chat message:
+  `{threadId, actionId, tool, title, content, mode, editTitle, editContent,
+  rejectReason, resolving, error}`.
+- Keeps approval controls current-page only; no pending-action list, refresh
+  recovery, Note CRUD/list API, backend route/schema change, or real Gemini
+  browser run.
+
+- [ ] Add failing API parser tests proving `confirmation_required` is captured
+  before `[PAUSED]`, terminal markers are not chunks, and resolve streams share
+  the same `[DONE]` / `[FAILED]` handling as chat streams.
+- [ ] Add failing state tests proving approve/edit/reject request payloads are
+  minimal, edit requires full title/content, duplicate submit is blocked, and
+  terminal success clears the pending controls.
+- [ ] Implement the smallest API and state helpers; do not change backend
+  schemas or add a second source of truth for action authorization.
+- [ ] Add the narrow Vue controls on the paused message only, using real
+  buttons and labeled inputs. Approve sends no title/content. Reject sends no
+  title/content and omits blank reason. Edit sends the complete edited title
+  and content.
+- [ ] Run focused frontend tests and `npm run build`.
+- [ ] Browser-drive a deterministic zero-Gemini fixture through approve and
+  reject paths. Record only the verified frontend/browser outcome; do not
+  claim another live-model smoke.
+- [ ] Update `README.md` and `docs/PROJECT_EVIDENCE.md` only with outcomes
+  actually verified in this task.
+
 ## Plan self-review
 
 - Every frozen spec section maps to a task above.
 - Phase A defaults, pre-cutover corrections, and the final cutover are separated.
 - The real Gemini step is an explicit user-notice stop.
-- No task creates a Note table, approval UI, free-text approval, or legacy write tool.
+- No task creates a Note table, note CRUD/list API, approval queue, free-text
+  approval, or legacy write tool. Browser controls are limited to the
+  current-page proposal approved by the 2026-08-15 amendment.
 - Receipt finalization has no post-receipt Gemini completion.
 - Prompt, intent rules, notices, status vocabulary, and verification-source meanings each have one owner.
