@@ -325,4 +325,4 @@ python3 -m mcp_server.server      # stdio server, ready for any MCP client
 ---
 
 ## Background
-Built to demonstrate production-grade RAG architecture for enterprise knowledge management, inspired by real-world AI assistant integration work during an internship at Shanghai Intelligent Transportation.
+Built as a portfolio project exploring RAG and agent architecture for enterprise knowledge management, inspired by real-world AI assistant integration work during an internship at Shanghai Intelligent Transportation.
