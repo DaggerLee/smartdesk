@@ -232,3 +232,64 @@ manual baseline resume, and tuned latency regressed substantially (105.61s
 average versus 44.05s baseline first pass). Baseline `h016` timed out on three
 consecutive attempts; partial resume files contain duplicate `h016` rows, so
 metrics must be computed from the main JSONL outputs keyed by `id`.
+
+## EV-009 — Successor holdouts and shipped-router check
+
+**Problem:** Follow-up tuning runs burned the EV-008 holdout, so later
+retrieval, routing, and answer-prompt fixes needed new held-out evidence that
+had not also been used to tune them.
+
+**Delivered:** A successor-holdout protocol recorded in
+`backend/eval/GOLD_SET_CHANGELOG.md`: each 18-item successor set stays on the
+same `kb_1` corpus, is pinned by SHA-256, is burned after its first formal
+inspection, and is retired if a later prompt change leaks its content. The
+same work fixed failure classes in CJK retrieval, cross-source routing, and the
+eval RAG prompt (`228ad60`, `7e59e0b`, `cb3609b`); removed holdout leakage from
+the router prompt (`617fe66`); rewrote source-bound RAG routing precedence,
+frozen at `d8728d6`; and made groundedness revisions return only the
+user-facing revised answer (`737a215`). PR #10 merged the work into `main` at
+`2b84caf`.
+
+**Evidence:**
+
+- Set definitions, hashes, preregistered criteria, and outcomes are recorded in
+  `backend/eval/GOLD_SET_CHANGELOG.md`. The counts below were recounted on
+  2026-10-12 from the committed result files in `backend/eval/results/`.
+- First successor run at `d22c807`: router 18/18, contains 18/18, grounded
+  11/14. The three grounding failures were diagnosed as eval RAG prompt
+  overreach, and the set was burned.
+- successor2 was retired before any formal run because a later router-prompt
+  example (`617fe66`) semantically matched one of its items.
+- successor3 first formal run at `ef70ae4`: router 17/18, contains 17/18,
+  grounded 15/15, positive-query retrieval 15/15.
+- successor4 was preregistered as a paired causal test of the router
+  precedence rewrite against `ef70ae4`, with route success criteria fixed
+  before results were visible. The baseline leg already scored router 18/18
+  (contains 14/18, grounded 14/14), so the required positive route delta was
+  impossible and the candidate full leg was not run.
+- A route-only leg of the shipped router at `a3148c5` scored 18/18 on
+  successor4 with zero errors. Result SHA-256:
+  `a8d6d8fcd970e74d6e434cf2ad7f15d153b5831da59265004ec70e9c2c2d5318`.
+- The successor4 baseline exposed groundedness revision leakage on `y015`,
+  fixed in `737a215`. A two-row replay of `y014` and `y015` at `dd68f01`, with
+  verified delivery enabled, returned contains 2/2 and grounded 2/2, and
+  neither delivered answer contained revision or grounding-audit
+  meta-language. Result SHA-256:
+  `03b634475ffc587675e97202a93d9a9728f15b694d7221f949471a78571d3338`.
+- Fresh verification of `main@2b84caf` on 2026-10-12: 288 backend tests passed
+  via `pytest` with 7 existing SQLAlchemy deprecation warnings and no Gemini
+  API key set; 21 frontend tests passed via `node --test src/*/*.test.js` after
+  a clean `npm ci`; the Vite production build transformed 75 modules.
+
+**Limitations:** Each successor result is one run on an 18-item set, with no
+multi-run variance estimate. successor4 is held-out non-regression evidence for
+the shipped router, not proof of causal improvement, because the baseline was
+already at the route ceiling. The route-only leg ran router classification
+only, without retrieval, answer generation, grounding, or judge calls. The
+successor4 baseline scored eval-harness answers with verified delivery off,
+while the replay used production delivery, so the replay's 2/2 is not a
+like-for-like comparison with that baseline; replay faithfulness was 0.4
+(n=2), and `y015` still appended a short postscript after its closing quote.
+An earlier replay attempt at `b51cd17` ended in Gemini 503 errors and is
+excluded as external-service-invalid. Burned sets remain regression artifacts
+only.

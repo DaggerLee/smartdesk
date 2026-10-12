@@ -4,6 +4,35 @@ SmartDesk is a portfolio-grade knowledge assistant that combines routed RAG,
 LangGraph agent workflows, MCP-exposed tools, measurable evaluation, and a
 browser-assisted human approval path for persistent writes.
 
+**What it does:** Upload PDF or TXT files into per-user knowledge bases, ask
+questions in Chinese, English, or another language, and get streamed answers
+that cite their sources. A router sends each question to a direct reply, a
+retrieval (RAG) answer, or a LangGraph agent that can search the knowledge base
+and the web. When the agent proposes saving a note, the browser shows the
+proposal to approve, edit, or reject before anything is written.
+
+**Tech stack:**
+
+| Layer | Technologies |
+|---|---|
+| Backend | Python 3.11+, FastAPI, SSE streaming, SQLAlchemy + SQLite, JWT + bcrypt |
+| Agent and LLM | LangGraph with SQLite checkpoints, Google Gemini (`models/gemini-3.5-flash`), FastMCP |
+| Retrieval | ChromaDB, sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`), DuckDuckGo web search |
+| Frontend | Vue 3, Vite, marked + DOMPurify |
+| Delivery and tests | Docker Compose, Nginx, pytest, `node:test` |
+
+## Quick Start (Docker)
+
+```bash
+git clone https://github.com/DaggerLee/smartdesk.git
+cd smartdesk
+cp .env.example .env        # set GEMINI_API_KEY and replace SECRET_KEY
+docker compose up --build
+```
+
+Open http://localhost — register an account and start uploading documents.
+To run without Docker, see [Local Development](#local-development).
+
 ## Why This Project
 
 The project focuses on a practical engineering question: how can an AI
@@ -17,7 +46,7 @@ persisted, and user-visible results drift apart?
 | Agent execution | None | LangGraph nodes with durable SQLite checkpoints and verified crash resume | EV-002 |
 | Answer delivery | Generated text streamed as produced | An optional policy commits the checked answer before emitting it | EV-003 |
 | Approval-gated agent actions | No approval-gated write tool | Browser-assisted `write_note` approval, finalized only from a committed receipt | EV-004, EV-005, EV-007 |
-| Agent-quality evaluation | No versioned gold-set evaluation | Original 35-item harness, now maintained as a 36-item regression set | EV-001 |
+| Agent-quality evaluation | No versioned gold-set evaluation | Original 35-item harness, now maintained as a 36-item regression set, plus fresh and preregistered successor holdouts | EV-001, EV-008, EV-009 |
 | Markdown rendering | Unsanitized `v-html` sink | One sanitized rendering boundary with source-level guards | EV-006 |
 
 Evidence identifiers refer to entries in
@@ -33,13 +62,16 @@ Evidence identifiers refer to entries in
 | Markdown XSS | Fixed and guarded by regression tests; 11 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-006 |
 | Browser approval controls | Current-page approve/reject visual smoke; 21 frontend tests; 75-module production build | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-007 |
 | Fresh holdout reproduction | 16-item fresh holdout; tuned eliminated baseline timeout failures (6 → 0) and improved grounded rate (50.0% → 91.7%), with latency regression | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-008 |
+| Successor holdouts | Shipped router 18/18 on the preregistered 18-item successor4 holdout; non-regression evidence, not a causal gain, because the baseline was already at ceiling | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-009 |
+| Current main | 288 backend tests and 21 frontend tests passed; 75-module production build (`main@2b84caf`) | [Project Evidence](docs/PROJECT_EVIDENCE.md), EV-009 |
 
 These baseline metrics are historical regression evidence, not current
 statistical guarantees or fresh-holdout generalization results. The maintained
 gold set currently has 36 items; fresh holdout and successor holdout claims are
 reported separately from the regression set. The fresh holdout reproduction is a
 16-item same-KB comparison, not a multi-run statistical study: reliability and
-groundedness reproduced, routing was mixed, and tuned latency regressed. The
+groundedness reproduced, routing was mixed, and tuned latency regressed.
+Successor holdout results are single runs on 18-item sets. The
 live HITL evidence is one local and one Docker success, not a three-run
 evaluation. Browser acceptance used deterministic zero-Gemini fixtures, not
 live-model browser round trips.
@@ -98,6 +130,8 @@ write claims do not pass through the ordinary answer groundedness path.
 - Persist the canonical verified agent answer before emitting it.
 - Require a committed action receipt as the source for write claims.
 - Keep public claims tied to the append-only project evidence log.
+- Preregister holdout success criteria and burn each holdout after its first
+  formal inspection.
 
 ## Focused Security Correction
 
@@ -118,6 +152,8 @@ framework.
 - Browser terminal-state and approval-control acceptance used deterministic
   zero-Gemini fixtures.
 - Exact token and monetary cost are unknown.
+- Holdout and successor-holdout results are single runs on 16- to 18-item
+  sets.
 
 ## Evidence Index
 
@@ -132,6 +168,7 @@ full evidence and limitations for:
 - EV-006 — unified Markdown XSS boundary
 - EV-007 — browser approval controls
 - EV-008 — fresh holdout reproduction check
+- EV-009 — successor holdouts and shipped-router check
 
 ---
 
@@ -174,17 +211,6 @@ full evidence and limitations for:
 | Deployment | Docker, docker-compose |
 
 </details>
-
-## Quick Start (Docker)
-
-```bash
-git clone https://github.com/DaggerLee/smartdesk.git
-cd smartdesk
-cp .env.example .env        # Add your GEMINI_API_KEY
-docker-compose up --build
-```
-
-Open http://localhost — register an account and start uploading documents.
 
 ## Local Development
 
@@ -299,4 +325,4 @@ python3 -m mcp_server.server      # stdio server, ready for any MCP client
 ---
 
 ## Background
-Built to demonstrate production-grade RAG architecture for enterprise knowledge management, inspired by real-world AI assistant integration work during internships at Google Maps and Shanghai Intelligent Transportation.
+Built as a portfolio project exploring RAG and agent architecture for enterprise knowledge management, inspired by real-world AI assistant integration work during an internship at Shanghai Intelligent Transportation.
