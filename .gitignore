@@ -21,6 +21,7 @@ venv/
 # Database, vector store, and checkpoint runtime data
 backend/data/
 /data/
+backend/eval/results/checkpoints_eval.sqlite
 CLAUDE.local.md
 
 # Local working documents (not for the public repo; docs/ reserved for public docs)
@@ -28,4 +29,5 @@ docs-local/
 
 # Trace logs and local Claude Code config
 backend/logs/
+/logs/
 .claude/settings.local.json

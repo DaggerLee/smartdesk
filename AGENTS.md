@@ -66,7 +66,7 @@ cd backend && pytest -q
 Frontend tests:
 
 ```bash
-cd frontend && node --test src/
+cd frontend && node --test
 ```
 
 Production build:
